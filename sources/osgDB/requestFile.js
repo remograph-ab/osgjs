@@ -1,9 +1,32 @@
 import P from 'bluebird';
 
+var _requestTransform = null;
+
+export var setRequestTransform = function(fn) {
+    _requestTransform = fn;
+};
+
 var requestFileFromURL = function(url, options) {
+    var requestUrl = url;
+    var requestHeaders = null;
+
+    if (_requestTransform) {
+        var transformed = _requestTransform(url);
+        if (transformed) {
+            requestUrl = transformed.url || url;
+            requestHeaders = transformed.headers;
+        }
+    }
+
     return new P(function(resolve, reject) {
         var req = new XMLHttpRequest();
-        req.open('GET', url, true);
+        req.open('GET', requestUrl, true);
+
+        if (requestHeaders) {
+            for (var key in requestHeaders) {
+                req.setRequestHeader(key, requestHeaders[key]);
+            }
+        }
 
         var responseType =
             options && options.responseType ? options.responseType.toLowerCase() : undefined;

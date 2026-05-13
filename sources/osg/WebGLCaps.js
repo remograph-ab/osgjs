@@ -390,11 +390,13 @@ WebGLCaps.prototype = {
 
         // get GPU, Angle or not, Opengl/directx, etc.
         //  ffx && chrome only
+        /*
         var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
         if (debugInfo) {
             params.UNMASKED_RENDERER_WEBGL = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
             params.UNMASKED_VENDOR_WEBGL = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
         }
+        */
         // TODO ?
         // try to compile a small shader to test the spec is respected
     },

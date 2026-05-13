@@ -647,6 +647,7 @@ StateCache.prototype = {
         buffer.units = attribute._units;
 
         if (
+            state.enable !== enable ||
             state.factor !== attribute._factor ||
             state.units !== attribute._units
         ) {
@@ -662,7 +663,6 @@ StateCache.prototype = {
 
         if (state.enable !== buffer.enable) {
             state.enable = buffer.enable;
-            gl.enable(gl.POLYGON_OFFSET_FILL);
             if (state.enable) {
                 gl.enable(gl.POLYGON_OFFSET_FILL);
             } else {

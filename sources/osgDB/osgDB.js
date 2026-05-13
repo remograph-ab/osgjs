@@ -7,7 +7,7 @@ import osgAnimationWrappers from 'osgWrappers/serializers/osgAnimation';
 import osgTextWrappers from 'osgWrappers/serializers/osgText';
 import Registry from 'osgDB/Registry';
 import fileHelper from 'osgDB/fileHelper';
-import requestFile from 'osgDB/requestFile';
+import requestFile, { setRequestTransform } from 'osgDB/requestFile';
 import zlib from 'osgDB/zlib';
 import BinaryDecoder from 'osgDB/BinaryDecoder';
 
@@ -21,6 +21,7 @@ osgDB.ObjectWrapper.serializers.osgText = osgTextWrappers;
 osgDB.Registry = Registry;
 osgDB.fileHelper = fileHelper;
 osgDB.requestFile = requestFile;
+osgDB.setRequestTransform = setRequestTransform;
 osgDB.BinaryDecoder = BinaryDecoder;
 
 utils.objectMix(osgDB, zlib);
