@@ -687,7 +687,7 @@ utils.createPrototypeStateAttribute(
                 gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, this._minFilter);
 
                 // handle extension EXT_texture_filter_anisotropic
-                if (this._maxAnisotropy > 1.0 && Texture.ANISOTROPIC_SUPPORT_EXT) {
+                if (Texture.ANISOTROPIC_SUPPORT_EXT) {
                     var multiplier =
                         this._maxAnisotropy < Texture.ANISOTROPIC_SUPPORT_MAX
                             ? this._maxAnisotropy
