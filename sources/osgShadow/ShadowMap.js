@@ -156,6 +156,24 @@ var ShadowMap = function(settings, shadowTexture) {
     this._tmpVecTercio = vec3.create();
     this._tmpMatrix = mat4.create();
 
+    // bounded (view-frustum fitted) shadow, directional light only.
+    // undefined => legacy whole-scene fit.
+    this._maxDistance = undefined;
+    this._tmpMatrixBis = mat4.create();
+    this._tmpVecEye = vec3.create();
+    this._tmpVecDir = vec3.create();
+    this._tmpVecCenter = vec3.create();
+    this._tmpVecEyePos = vec3.create();
+
+    // when the bounded (max-distance) fit is active for the current frame, holds
+    // the light-space depth range [zNear, zFar] we computed from the view region.
+    // Used to override the cull-computed near/far (which is driven by whichever
+    // large terrain tiles happen to fall in the shadow frustum and therefore
+    // jumps around as the sun/camera move), keeping the shadow depth mapping
+    // stable and the depth bias small.
+    this._boundedActive = false;
+    this._boundedDepthRange = vec2.create();
+
     if (settings) this.setShadowSettings(settings);
 
     this._infiniteFrustum = true;
@@ -229,6 +247,18 @@ utils.createPrototypeObject(
             this.setKernelSizePCF(shadowSettings.kernelSizePCF);
             this.setBias(shadowSettings.bias);
             this.setNormalBias(shadowSettings.normalBias);
+            this.setMaxDistance(shadowSettings.shadowMaxDistance);
+        },
+
+        // Directional light only: fit the shadow map to the camera view frustum
+        // clamped to `distance` world units instead of the whole scene bounds.
+        // Pass a falsy value to restore the legacy whole-scene fit.
+        setMaxDistance: function(distance) {
+            this._maxDistance = distance;
+        },
+
+        getMaxDistance: function() {
+            return this._maxDistance;
         },
 
         setCastsShadowDrawTraversalMask: function(mask) {
@@ -725,6 +755,191 @@ utils.createPrototypeObject(
             this._depthRange[0] = zNear;
             this._depthRange[1] = zFar;
         },
+
+        // Directional light only.
+        // Fit an orthographic shadow frustum to the portion of the main camera
+        // view frustum within `this._maxDistance`, instead of the whole scene.
+        // This concentrates the shadow map resolution where the viewer looks.
+        //
+        // The fit uses the rotation-invariant bounding sphere of the clamped
+        // view-frustum slice (stable when the camera rotates) and snaps the
+        // frustum to the shadow-map texel grid (stable when the camera moves),
+        // which together remove shadow edge shimmering.
+        //
+        // Returns true when the bounded frustum was built, false when it should
+        // fall back to the whole-scene fit (e.g. non-perspective main camera).
+        makeOrthoBoundedFromViewFrustum: function(cullVisitor, bbox, eyeDir, view, projection) {
+            var maxDistance = this._maxDistance;
+
+            var camProj = cullVisitor.getCurrentProjectionMatrix();
+
+            // only a perspective main camera is handled here
+            if (camProj[15] !== 0.0) return false;
+
+            // recover near/far and half-fov tangents from the perspective matrix
+            var camNear = camProj[14] / (camProj[10] - 1.0);
+            var camFar = camProj[14] / (camProj[10] + 1.0);
+            var tanX = 1.0 / camProj[0];
+            var tanY = 1.0 / camProj[5];
+
+            if (
+                !isFinite(camNear) ||
+                !isFinite(camFar) ||
+                camFar <= camNear ||
+                !(maxDistance > 0.0)
+            ) {
+                return false;
+            }
+
+            // slice of the view frustum we want crisp shadows in
+            var sliceNear = camNear;
+            var sliceFar = Math.min(camFar, maxDistance);
+            if (sliceFar <= sliceNear) return false;
+
+            // camera position and forward direction in the shadowedScene world frame
+            var eyeToWorld = this._tmpMatrixBis;
+            mat4.invert(eyeToWorld, cullVisitor.getCurrentModelViewMatrix());
+
+            var eyeWorld = this._tmpVecEye;
+            eyeWorld[0] = eyeToWorld[12];
+            eyeWorld[1] = eyeToWorld[13];
+            eyeWorld[2] = eyeToWorld[14];
+
+            // camera looks down -Z in eye space
+            var viewDir = this._tmpVecDir;
+            viewDir[0] = -eyeToWorld[8];
+            viewDir[1] = -eyeToWorld[9];
+            viewDir[2] = -eyeToWorld[10];
+            vec3.normalize(viewDir, viewDir);
+
+            // rotation-invariant bounding sphere of the [sliceNear, sliceFar] slice
+            var tanFactor = Math.sqrt(tanX * tanX + tanY * tanY);
+            var an = sliceNear * tanFactor;
+            var af = sliceFar * tanFactor;
+
+            var centerDist =
+                (sliceFar * sliceFar - sliceNear * sliceNear + af * af - an * an) /
+                (2.0 * (sliceFar - sliceNear));
+            if (centerDist > sliceFar) centerDist = sliceFar;
+            else if (centerDist < sliceNear) centerDist = sliceNear;
+
+            var dNear = centerDist - sliceNear;
+            var dFar = sliceFar - centerDist;
+            var radius = Math.sqrt(Math.max(dNear * dNear + an * an, dFar * dFar + af * af));
+            radius = Math.max(radius, ShadowMap.EPSILON);
+            this._radius = radius;
+
+            // sphere center in world space
+            var center = this._tmpVecCenter;
+            vec3.scaleAndAdd(center, eyeWorld, viewDir, centerDist);
+
+            // depth extent along the light direction, from the caster scene bbox,
+            // so tall/off-screen casters between the light and the region are kept
+            var bmin = bbox.getMin();
+            var bmax = bbox.getMax();
+            var projMin = Infinity;
+            var projMax = -Infinity;
+            for (var i = 0; i < 8; i++) {
+                var cx = i & 1 ? bmax[0] : bmin[0];
+                var cy = i & 2 ? bmax[1] : bmin[1];
+                var cz = i & 4 ? bmax[2] : bmin[2];
+                var p =
+                    (cx - center[0]) * eyeDir[0] +
+                    (cy - center[1]) * eyeDir[1] +
+                    (cz - center[2]) * eyeDir[2];
+                if (p < projMin) projMin = p;
+                if (p > projMax) projMax = p;
+            }
+
+            // make sure the region sphere itself is inside the depth extent
+            if (-radius < projMin) projMin = -radius;
+            if (radius > projMax) projMax = radius;
+
+            // Bound the light-space depth range. Casters farther from the light than
+            // the region cannot cast shadows into it, so the far side only needs to
+            // reach the region (projMax = radius). The near (toward-light) side is
+            // capped to a small multiple of the region radius so tall/near casters
+            // just outside the region are still captured while keeping the range
+            // tight around the region.
+            //
+            // This cap is *critical* for large scenes: projMin above is derived from
+            // the whole caster scene bbox projected onto the light direction. On a
+            // large terrain that bbox is huge, so projMin would be pushed far toward
+            // the light, adding a large empty near-padding with no casters. That
+            // padding compresses the actual terrain into a thin slice of the depth
+            // range (visible as a narrow light-gray band in the debug overlay), and
+            // because the shadow depth bias is a *normalized* value
+            // (worldBias = normalizedBias * range) it makes the bias map to a large,
+            // range-dependent world offset -- producing detached shadows, gaps, and a
+            // uniform self-shadow over the whole bounded region. Capping the near side
+            // to ~1.5 * radius keeps the range fit to the region on scenes of any size
+            // (small scenes already had a small bbox, which is why they worked).
+            var depthCapTowardLight = radius * 1.5;
+            if (projMin < -depthCapTowardLight) projMin = -depthCapTowardLight;
+            projMax = radius;
+
+            var margin = radius * 0.05 + ShadowMap.EPSILON;
+
+            // place the shadow eye just before the closest caster along the light
+            var eyePos = this._tmpVecEyePos;
+            vec3.scaleAndAdd(eyePos, center, eyeDir, projMin - margin);
+
+            var zNear = margin;
+            var zFar = projMax - projMin + 2.0 * margin;
+
+            var up = this.getUp(eyeDir);
+            mat4.lookAtDirection(view, eyePos, eyeDir, up);
+            mat4.ortho(projection, -radius, radius, -radius, radius, zNear, zFar);
+
+            // texel snapping: quantize the region center to the shadow-map grid.
+            // Applied to the view matrix translation so the receiver (which reads
+            // the full view matrix but a centered projection) stays in sync.
+            var worldUnitsPerTexel = 2.0 * radius / this._textureSize;
+            var cxView = view[0] * center[0] + view[4] * center[1] + view[8] * center[2] + view[12];
+            var cyView = view[1] * center[0] + view[5] * center[1] + view[9] * center[2] + view[13];
+            view[12] += Math.round(cxView / worldUnitsPerTexel) * worldUnitsPerTexel - cxView;
+            view[13] += Math.round(cyView / worldUnitsPerTexel) * worldUnitsPerTexel - cyView;
+
+            this._projection[0] = radius;
+            this._projection[1] = radius;
+            this._projection[2] = 1.0;
+
+            this._depthRange[0] = zNear;
+            this._depthRange[1] = zFar;
+
+            // remember this stable, view-region-based range so we can restore it
+            // after the shadow cull overwrites _depthRange with the (unstable,
+            // tile-bounds-driven) cull-computed near/far.
+            this._boundedDepthRange[0] = zNear;
+            this._boundedDepthRange[1] = zFar;
+            this._boundedActive = true;
+
+            // Opt-in diagnostics: set `window.SHADOW_DEBUG = true` in the browser
+            // console to log the bounded-fit parameters (throttled). Useful to see
+            // how radius/range/sun-elevation change with the time of day.
+            if (typeof window !== 'undefined' && window.SHADOW_DEBUG) {
+                var nowMs = Date.now();
+                if (!this._lastDebugLog || nowMs - this._lastDebugLog > 500) {
+                    this._lastDebugLog = nowMs;
+                    var elevationDeg = Math.asin(Math.max(-1, Math.min(1, -eyeDir[2]))) * 180 / Math.PI;
+                    // toSun = -eyeDir (eyeDir is the light TRAVEL direction)
+                    var azShadowDeg = Math.atan2(-eyeDir[0], -eyeDir[1]) * 180 / Math.PI;
+                    // eslint-disable-next-line no-console
+                    console.log(
+                        '[shadow] sunElev=' + elevationDeg.toFixed(1) + 'deg' +
+                            ' shadowAz=' + azShadowDeg.toFixed(1) + 'deg' +
+                            ' lightTravel=' + eyeDir[0].toFixed(3) + ',' + eyeDir[1].toFixed(3) + ',' + eyeDir[2].toFixed(3) +
+                            ' radius=' + radius.toFixed(1) +
+                            ' range=' + (zFar - zNear).toFixed(1) +
+                            ' projMin=' + projMin.toFixed(1) +
+                            ' projMax=' + projMax.toFixed(1) +
+                            ' center=' + center[0].toFixed(0) + ',' + center[1].toFixed(0) + ',' + center[2].toFixed(0)
+                    );
+                }
+            }
+
+            return true;
+        },
         /*
      * Sync camera and light vision so that
      * shadow map render using a camera whom
@@ -733,6 +948,9 @@ utils.createPrototypeObject(
      */
         aimShadowCastingCamera: function(cullVisitor, bbox) {
             var light = this._light;
+
+            // reset each frame; set true only when the bounded fit succeeds below
+            this._boundedActive = false;
 
             if (!light) {
                 this._emptyCasterScene = true;
@@ -815,7 +1033,20 @@ utils.createPrototypeObject(
                 // since the transform to world above
                 vec3.scale(worldLightPos, worldLightPos, -1.0);
                 vec3.normalize(worldLightPos, worldLightPos);
-                this.makeOrthoFromBoundingBox(bbox, worldLightPos, view, projection);
+
+                var boundedDone = false;
+                if (this._maxDistance) {
+                    boundedDone = this.makeOrthoBoundedFromViewFrustum(
+                        cullVisitor,
+                        bbox,
+                        worldLightPos,
+                        view,
+                        projection
+                    );
+                }
+                if (!boundedDone) {
+                    this.makeOrthoFromBoundingBox(bbox, worldLightPos, view, projection);
+                }
 
                 if (this._debug) {
                     // project box by view to get projection debug bbox
@@ -839,6 +1070,20 @@ utils.createPrototypeObject(
                     cullVisitor.getNearFarRatio(),
                     this._depthRange
                 );
+            }
+
+            // For the bounded (max-distance) fit, restore our stable view-region
+            // depth range. The shadow cull (setLightFrustum) has just overwritten
+            // _depthRange with the geometry near/far, which is driven by whichever
+            // large PagedLOD terrain tiles fall in the shadow frustum and therefore
+            // jumps as the sun/camera move -- causing the depth bias (a normalized
+            // value) to map to a wildly varying world offset, so shadows detach,
+            // leave gaps, and abruptly disappear when stepping time. Both the caster
+            // depth write and the receiver read from this same _depthRange, so using
+            // our stable range keeps them consistent and the bias small and constant.
+            if (this._boundedActive && !this._emptyCasterScene) {
+                this._depthRange[0] = this._boundedDepthRange[0];
+                this._depthRange[1] = this._boundedDepthRange[1];
             }
 
             // overwrite any cullvisitor wrongness done by any clampProjectionMatrix
@@ -874,6 +1119,13 @@ utils.createPrototypeObject(
         // an early out.
         // ie: in shader, no texfetch
         markSceneAsNoShadow: function() {
+            // no casters: keep the receiver early-out (depthRange 0,0). Make sure
+            // the bounded override does not re-enable a range afterwards.
+            this._boundedActive = false;
+            if (typeof window !== 'undefined' && window.SHADOW_DEBUG) {
+                // eslint-disable-next-line no-console
+                console.log('[shadow] markSceneAsNoShadow (no casters in shadow frustum)');
+            }
             this.setShadowUniformsReceive(true);
             // we still clear the shadow so we filled it
             this._needRedraw = false;
@@ -919,8 +1171,52 @@ utils.createPrototypeObject(
                 this._debugNode.accept(cullVisitor);
             }
 
+            // The shadow camera must NOT drive the DatabasePager: it traverses the
+            // same PagedLOD scene as the main camera but with the (small) shadow
+            // viewport and light projection, so its required-LOD/priority would
+            // overwrite the main camera's paging requests and starve tile loading
+            // (worse with a wider bounded frustum). Detach the request handler for
+            // the shadow traversal so the shadow map just renders already-loaded
+            // tiles; the main camera remains the sole driver of terrain paging.
+            var previousDatabaseRequestHandler = cullVisitor.getDatabaseRequestHandler();
+            cullVisitor.setDatabaseRequestHandler(undefined);
+
+            // Make PagedLOD/Lod nodes select the SAME level of detail as the main
+            // camera during this shadow cull. The shadow camera is an orthographic
+            // camera positioned far toward the light with a small viewport, so left
+            // to itself it selects a much coarser terrain LOD than the main view.
+            // That coarse caster surface floats above the fine mesh the main camera
+            // renders as a shadow receiver, so the receiver is "below" its own
+            // (coarser) shadow caster and the whole bounded region self-shadows.
+            //
+            // We install an LOD override built from the main-camera state captured
+            // here (its projection, viewport, and a view-shift matrix). Because the
+            // shadow camera is ABSOLUTE_RF, during traversal getCurrentModelViewMatrix
+            // is (shadowView * nodeModel); multiplying by viewShift = mainMV *
+            // inverse(shadowView) yields (mainMV * nodeModel), i.e. exactly the
+            // main-camera modelview for that node. LOD selection then matches the
+            // main view and caster/receiver use the same geometry.
+            var lodOverride = this._lodCameraOverride;
+            if (!lodOverride) {
+                lodOverride = this._lodCameraOverride = {
+                    viewShift: mat4.create(),
+                    projection: mat4.create(),
+                    viewport: undefined
+                };
+            }
+            mat4.copy(lodOverride.projection, cullVisitor.getCurrentProjectionMatrix());
+            lodOverride.viewport = cullVisitor.getViewport();
+            var invShadowView = this._lodTmpInvView || (this._lodTmpInvView = mat4.create());
+            mat4.invert(invShadowView, this._viewMatrix);
+            mat4.mul(lodOverride.viewShift, cullVisitor.getCurrentModelViewMatrix(), invShadowView);
+            cullVisitor.setLODCameraOverride(lodOverride);
+
             // do RTT from the camera traversal mimicking light pos/orient
             this._cameraShadow.accept(cullVisitor);
+
+            cullVisitor.setLODCameraOverride(undefined);
+
+            cullVisitor.setDatabaseRequestHandler(previousDatabaseRequestHandler);
 
             // make sure no negative near
             this.nearFarBounding();

@@ -56,12 +56,15 @@ float shadowReceive(const in bool lighted,
     // Calculate shadow amount
     float shadow = 1.0;
 
-    if (!lighted) {
-        shadow = 0.0;
-#ifndef _OUT_DISTANCE
-        earlyOut = true;
-#endif // _OUT_DISTANCE
-    }
+    // NOTE: shadow occlusion is a geometric fact (is a caster between this
+    // fragment and the light?) and must NOT be gated on whether the surface
+    // faces the light (dotNL > 0). Stock osgjs short-circuited to shadow = 0.0
+    // for back-facing fragments as a micro-optimization (their diffuse is 0
+    // anyway), but that breaks flat/fake-lit terrain that is shaded independently
+    // of its normal: those receivers never reached the real depth compare and the
+    // whole shadowed region collapsed to a uniform dark blanket. Always compute
+    // the real shadow below; back-facing lit surfaces still have diffuse 0 so
+    // this is a no-op for them.
 
     if (shadowDepthRange.x == shadowDepthRange.y) {
         earlyOut = true;
@@ -74,6 +77,11 @@ float shadowReceive(const in bool lighted,
     vec2 shadowUV;
     float N_Dot_L;
     float invDepthRange;
+
+    // fade shadows out towards the border of the shadow map, so that when the
+    // shadow frustum is bounded (ShadowMap max distance) distant geometry leaving
+    // the shadowed region fades out smoothly instead of with a hard edge.
+    float shadowFade = 1.0;
 
     if (!earlyOut) {
 
@@ -187,12 +195,41 @@ float shadowReceive(const in bool lighted,
                 earlyOut = true;// limits of light frustum
             }
 
+            // Radial (circular) fade toward the region edge instead of the square
+            // max() metric, so the bounded boundary reads as a soft curve rather
+            // than a straight axis-aligned line (the "straight limit" between
+            // shadowed and unshadowed terrain). Kept fairly tight because
+            // foreground objects sit near the frustum-slice sphere edge and a wide
+            // fade would drop their shadows.
+            float fadeRadial = length(shadowUV * 2.0 - 1.0);
+            shadowFade = 1.0 - smoothstep(0.92, 1.0, fadeRadial);
+
             // most precision near 0, make sure we are near 0 and in [0,1]
             shadowReceiverZ = - shadowVertexEye.z;
             shadowReceiverZ =  (shadowReceiverZ - shadowDepthRange.x) * invDepthRange;
 
+            // Fade out as the receiver approaches the far plane of the bounded
+            // region. Just inside the far cutoff the caster depth map may not cover
+            // the fragment, so it over-shadows into a thin dark band right before
+            // the hard earlyOut below; fading avoids that seam.
+            shadowFade = min(shadowFade, 1.0 - smoothstep(0.9, 1.0, shadowReceiverZ));
+
             if(shadowReceiverZ < 0.0) {
-                earlyOut = true; // notably behind camera
+                earlyOut = true; // notably behind camera (closer to light than region)
+            }
+
+            // Beyond the far plane of the (bounded) shadow region: this fragment is
+            // farther from the light than anything the shadow map covers, so it can
+            // not be correctly tested against the caster depth map. Stock osgjs
+            // clamped receiverZ to 1.0 and compared anyway, which forces such
+            // fragments "behind" every caster texel and paints them uniformly black.
+            // With a bounded (max-distance) shadow region that happens en masse to
+            // all terrain outside the region -- e.g. when looking down from above,
+            // the region is fit to the near view slice (empty air) and the whole
+            // distant terrain reads as over-shadowed (the "dark square"). Treat
+            // out-of-range receivers as un-shadowed instead.
+            if(shadowReceiverZ > 1.0) {
+                earlyOut = true; // beyond the shadow region: no shadow here
             }
 
         }
@@ -250,15 +287,30 @@ float shadowReceive(const in bool lighted,
         // empty statement because of weird gpu intel bug
     } else {
 
-        // depth bias: fighting shadow acne (depth imprecsion z-fighting)
-        // cosTheta is dot( n, l ), clamped between 0 and 1
-        // float shadowBias = 0.005*tan(acos(N_Dot_L));
-        // same but 4 cycles instead of 15
-        float depthBias = 0.05 * sqrt( 1.0 - N_Dot_L * N_Dot_L) / clamp(N_Dot_L, 0.0005, 1.0);
-
-        // That makes sure that plane perpendicular to light doesn't flicker due to
-        // selfshadowing and 1 = dot(Normal, Light) using a min bias
-        depthBias = clamp(depthBias, 0.00005, 2.0 * shadowBias);
+        // Depth bias referenced to the shadow-map TEXEL size, not the (large,
+        // bounded) depth range. The stock bias was a normalized value multiplied
+        // by the depth range in the compare, so on a large bounded region
+        // (range ~300m) even a small normalized bias became a big world-space push
+        // ALONG the light -> the shadow detached from its caster (peter-panning),
+        // worse at low sun. Here we build a small, near-constant WORLD offset
+        // (~one shadow texel) and normalize it by the range only at the end, so the
+        // world push stays tiny regardless of range. Grazing-angle acne is handled
+        // by the range-independent normal-offset bias instead (see _NORMAL_OFFSET),
+        // which shifts the sample along the surface normal and so does not detach
+        // the shadow.
+        float worldTexel = 2.0 * shadowProjection.x * shadowSize.x; // world units / texel
+        // Slope-scaled: on grazing surfaces (surface nearly parallel to the light,
+        // N_Dot_L small) the receiver depth changes by ~worldTexel*tan(angle) across
+        // one shadow texel, so a constant bias leaves a periodic stripe of acne.
+        // Add a tan(angle) term, but keep it texel-referenced and capped so the
+        // along-light push (peter-panning) stays bounded regardless of sun angle.
+        float slopeTan = sqrt(1.0 - N_Dot_L * N_Dot_L) / clamp(N_Dot_L, 0.1, 1.0);
+        // shadowBias is repurposed as the base depth bias in TEXELS (live-tunable
+        // via setBias; see Viewer.js shadow keys). Constant base + slope term,
+        // capped a few texels above the base so peter-panning stays bounded.
+        float worldBias = worldTexel * (shadowBias + slopeTan);
+        worldBias = min(worldBias, worldTexel * (shadowBias + 3.0));
+        float depthBias = worldBias * invDepthRange;
 
         // shadowZ must be clamped to [0,1]
         // otherwise it's not comparable to shadow caster depth map
@@ -276,11 +328,23 @@ float shadowReceive(const in bool lighted,
                                  clampDimension
                                  OPT_INSTANCE_ARG_outDistance
                                  OPT_INSTANCE_ARG_jitter);
+
+        // Snap faint partial-shadowing up to fully lit. Inside the bounded region
+        // even open, un-occluded terrain returns res slightly below 1.0 (PCF
+        // filtering + micro-relief self-shadowing), so the whole region reads
+        // subtly darker than the untouched exterior -- visible as an unnatural
+        // "shadowed patch" that follows the camera when flying. Remapping
+        // [0, threshold] -> [0, 1] forces any res at/above the threshold to exactly
+        // 1.0 (fully lit) so only genuine shadows (res well below threshold) darken
+        // the ground, while a soft gradient is kept below the threshold for real
+        // penumbrae. shadowBias-independent, so it does not affect contact/acne.
+        res = smoothstep(0.0, 0.85, res);
 #ifdef _OUT_DISTANCE
-        if (lighted) shadow = res;
+        shadow = mix(1.0, res, shadowFade);
         outDistance *= shadowDepthRange.y - shadowDepthRange.x; // world space distance
 #else
         shadow = res;
+        shadow = mix(1.0, shadow, shadowFade);
 #endif  // _OUT_DISTANCE
     }
 

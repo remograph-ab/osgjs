@@ -30,6 +30,13 @@
             model: 'material-test',
             shadowProjection: 'fov',
             fov: 50,
+            // Directional light only: 0 = disabled (legacy whole-scene fit).
+            // When > 0, fit the shadow map to the view frustum within this many
+            // world units for higher near-camera accuracy on large scenes.
+            shadowMaxDistance: 0,
+            // Uniform scale applied to the whole shadowed scene, to simulate a
+            // larger scene/model and see the effect of shadowMaxDistance.
+            modelScale: 1,
             kernelSizePCF: '1Tap(4texFetch)',
             atlas: false,
             lightMovement: 'Rotate',
@@ -318,6 +325,12 @@
             }
             controller = gui.add(this._config, 'textureSize', textureSizes);
             controller.onChange(this.updateShadow.bind(this));
+
+            controller = gui.add(this._config, 'shadowMaxDistance', 0, 20).step(0.1);
+            controller.onChange(this.updateShadow.bind(this));
+
+            controller = gui.add(this._config, 'modelScale', 1, 50).step(1);
+            controller.onChange(this.updateModelScale.bind(this));
 
             controller = gui.add(this._config, 'lightNum', 1, this._maxLights).step(1);
             controller.onChange(this.updateShadow.bind(this));
@@ -799,9 +812,9 @@
                         .getShaderProcessor();
 
                     if (this.shaderProcessor.hasShader('shadowReceive.glsl')) {
-                      delete this.shaderProcessor._shadersList['shadowReceive.glsl'];
-                      delete this.shaderProcessor._shadersText['shadowReceive.glsl'];
-                      OSG.osgShader.nodeFactory._nodes.delete('ShadowReceive');
+                        delete this.shaderProcessor._shadersList['shadowReceive.glsl'];
+                        delete this.shaderProcessor._shadersText['shadowReceive.glsl'];
+                        OSG.osgShader.nodeFactory._nodes.delete('ShadowReceive');
                     }
 
                     this.shaderProcessor.addShaders(this.shaderLib);
@@ -890,6 +903,17 @@
                     g.__controllers[i].updateDisplay();
                 }
             }
+        },
+
+        // Applies a uniform scale to the whole shadowed scene so a "larger"
+        // scene can be simulated to see the effect of shadowMaxDistance.
+        updateModelScale: function() {
+            if (!this._shadowScene) return;
+            var scale = this._config.modelScale || 1;
+            var matrix = this._shadowScene.getMatrix();
+            osg.mat4.fromScaling(matrix, [scale, scale, scale]);
+            osg.mat4.setTranslation(matrix, this._config.targetPosition);
+            this._shadowScene.dirtyBound();
         },
 
         // Scene to be shadowed,  and to cast  shadow from

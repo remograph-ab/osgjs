@@ -41,6 +41,14 @@ var CullStack = function() {
     // contains the id has a key to computed Inverse Matrix
     this._cameraMatrixInverse = new PooledMap();
     this._cameraMatrixInverseRoot = undefined;
+
+    // Optional LOD camera override. When set (e.g. during a shadow-map cull)
+    // Lod/PagedLOD compute their required range using this reference camera
+    // (viewport, projection and a view-shift matrix) instead of the current
+    // traversal camera, so shadow casters select the SAME LOD level as the main
+    // view. Without it the shadow (ortho) camera picks a coarser LOD whose
+    // surface floats above the fine receiver mesh and self-shadows the region.
+    this._lodCameraOverride = undefined;
 };
 
 utils.createPrototypeObject(
@@ -60,6 +68,16 @@ utils.createPrototypeObject(
             this._cameraMatrixInverse.reset();
 
             this._cameraMatrixInverseRoot = undefined;
+
+            this._lodCameraOverride = undefined;
+        },
+
+        setLODCameraOverride: function(override) {
+            this._lodCameraOverride = override;
+        },
+
+        getLODCameraOverride: function() {
+            return this._lodCameraOverride;
         },
 
         getProjectionMatrixStack: function() {

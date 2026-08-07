@@ -139,6 +139,7 @@ utils.createPrototypeNode(
             var zeroVector = vec3.create();
             var eye = vec3.create();
             var viewModel = mat4.create();
+            var mvOverride = mat4.create();
 
             return function(visitor) {
                 var traversalMode = visitor.traversalMode;
@@ -159,10 +160,19 @@ utils.createPrototypeNode(
                     case NodeVisitor.TRAVERSE_ACTIVE_CHILDREN:
                         var requiredRange = 0, distance = 0;
 
+                        // Optional LOD camera override (e.g. shadow-map cull): pick
+                        // the LOD level as seen by the main camera, not the current
+                        // (shadow) camera, so casters match the receiver's LOD.
+                        var lodOverride = visitor.getLODCameraOverride();
+
                         if (this._rangeMode === Lod.DISTANCE_FROM_EYE_POINT) {
                             // Calculate distance from viewpoint
                             // SPOTSCALE: Only need for this with distance from eye point now
                             var matrix = visitor.getCurrentModelViewMatrix();
+                            if (lodOverride) {
+                                mat4.mul(mvOverride, lodOverride.viewShift, matrix);
+                                matrix = mvOverride;
+                            }
                             mat4.invert(viewModel, matrix);
                             vec3.transformMat4(eye, zeroVector, viewModel);
                             distance = vec3.distance(this.getBound().center(), eye);
@@ -171,7 +181,16 @@ utils.createPrototypeNode(
                         } else {
                             // SPOTSCALE: To avoid distorted bounding spheres near edges of screen resulting in
                             // larger pixel area than bounding sphere straight ahead, use radius-based calculation from OSG instead:
-                            requiredRange = this.clampedPixelSize(this.getBound(), visitor.getViewport(), visitor.getCurrentProjectionMatrix(), visitor.getCurrentModelViewMatrix()) / visitor.getLODScale();
+                            var vp = lodOverride ? lodOverride.viewport : visitor.getViewport();
+                            var proj = lodOverride
+                                ? lodOverride.projection
+                                : visitor.getCurrentProjectionMatrix();
+                            var mv = visitor.getCurrentModelViewMatrix();
+                            if (lodOverride) {
+                                mat4.mul(mvOverride, lodOverride.viewShift, mv);
+                                mv = mvOverride;
+                            }
+                            requiredRange = this.clampedPixelSize(this.getBound(), vp, proj, mv) / visitor.getLODScale();
                             // Square pixels as before
                             requiredRange = Math.pow(requiredRange, 2.0);
                             
@@ -221,7 +240,7 @@ utils.createPrototypeNode(
                                     needToLoadChild = true;
                                 }
                             }
-                            else if (this._perRangeDataList[j].dbrequest !== undefined && this._perRangeDataList[j].dbrequest._function === undefined) {
+                            else if (dbhandler !== undefined && this._perRangeDataList[j].dbrequest !== undefined && this._perRangeDataList[j].dbrequest._function === undefined) {
                                 // If there is a pending request for this node although we are now far from it, throw it out of the queue
                                 // (if it's not loaded by function so that we can trust the URL)
                                 dbhandler.removeRequest(this._databasePath + this._perRangeDataList[j].filename);
@@ -243,7 +262,10 @@ utils.createPrototypeNode(
                                 this.children[numChildren - 1].accept(visitor);
                             }
                             // now request the loading of the next unloaded child.
-                            if (numChildren < this._perRangeDataList.length) {
+                            // Skip entirely when no DatabaseRequestHandler is set
+                            // (e.g. the shadow camera traversal): paging must only
+                            // be driven by the main camera.
+                            if (dbhandler !== undefined && numChildren < this._perRangeDataList.length) {
                                 // compute priority from where abouts in the required range the distance falls.
                                 var priority =
                                     (this._range[numChildren][0] - requiredRange) /
@@ -284,6 +306,64 @@ utils.createPrototypeNode(
                                 }
                             }
                         }
+
+                        // --- DEBUG: LOD-selection match check (TEMPORARY) ---
+                        // Set window.SHADOW_LOD_DEBUG = true to compare which LOD
+                        // child this node picks for the main camera vs the shadow
+                        // caster (lodOverride active). If they differ, the caster
+                        // renders a different terrain LOD than the receiver, which
+                        // is the floating-caster self-shadow cause.
+                        if (typeof window !== 'undefined' && window.SHADOW_LOD_DEBUG) {
+                            var _eff = needToLoadChild ? this.children.length - 1 : lastChildTraversed;
+                            var _fn = visitor.getFrameStamp
+                                ? visitor.getFrameStamp().getFrameNumber()
+                                : 0;
+                            if (!window.__lodStats || window.__lodStats.frame !== _fn) {
+                                if (window.__lodStats) {
+                                    // eslint-disable-next-line no-console
+                                    console.log(
+                                        '[lod] frame=' + window.__lodStats.frame +
+                                            ' match=' + window.__lodStats.match +
+                                            ' mismatch=' + window.__lodStats.mismatch +
+                                            (window.__lodStats.examples.length
+                                                ? ' e.g. main/shadow=' +
+                                                  window.__lodStats.examples.join(',')
+                                                : '')
+                                    );
+                                }
+                                window.__lodStats = {
+                                    frame: _fn,
+                                    match: 0,
+                                    mismatch: 0,
+                                    examples: []
+                                };
+                            }
+                            if (lodOverride) {
+                                this.__shadowLOD = _eff;
+                                this.__shadowLODFrame = _fn;
+                            } else {
+                                this.__mainLOD = _eff;
+                                this.__mainLODFrame = _fn;
+                            }
+                            if (
+                                this.__shadowLOD !== undefined &&
+                                this.__mainLOD !== undefined &&
+                                this.__shadowLODFrame === _fn &&
+                                this.__mainLODFrame === _fn
+                            ) {
+                                if (this.__shadowLOD === this.__mainLOD) {
+                                    window.__lodStats.match++;
+                                } else {
+                                    window.__lodStats.mismatch++;
+                                    if (window.__lodStats.examples.length < 5) {
+                                        window.__lodStats.examples.push(
+                                            this.__mainLOD + '/' + this.__shadowLOD
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
                         break;
                     default:
                         break;

@@ -168,8 +168,28 @@ utils.createPrototypeObject(
         },
 
         setKernelSizePCF: function(value) {
+            // Also record it on the shared settings so shadow maps created later
+            // (in addLight) inherit the kernel; otherwise soft shadows never take
+            // effect on the atlas path because setKernelSizePCF is typically called
+            // before any light/shadow map exists.
+            if (this._shadowSettings) this._shadowSettings.kernelSizePCF = value;
             for (var i = 0, l = this._shadowMaps.length; i < l; i++) {
                 this._shadowMaps[i].setKernelSizePCF(value);
+            }
+        },
+
+        getMaxDistance: function(numShadow) {
+            if (numShadow !== undefined) {
+                return this._shadowMaps[numShadow].getMaxDistance();
+            } else if (this._shadowMaps.length !== 0) {
+                return this._shadowMaps[0].getMaxDistance();
+            }
+        },
+
+        setMaxDistance: function(value) {
+            if (this._shadowSettings) this._shadowSettings.setShadowMaxDistance(value);
+            for (var i = 0, l = this._shadowMaps.length; i < l; i++) {
+                this._shadowMaps[i].setMaxDistance(value);
             }
         },
 
@@ -281,21 +301,22 @@ utils.createPrototypeObject(
         recomputeViewports: function() {
             var numViews = this._shadowMaps.length;
 
-            var viewDivideY = numViews > 2 ? Math.ceil(Math.sqrt(2 * Math.ceil(numViews / 2))) : numViews;
+            var viewDivideY =
+                numViews > 2 ? Math.ceil(Math.sqrt(2 * Math.ceil(numViews / 2))) : numViews;
             var viewDivideX = viewDivideY;
-            
+
             var mapSizeX = this._textureSize / viewDivideX;
             var mapSizeY = this._textureSize / viewDivideY;
 
             var numShadowWidth = this._textureSize / mapSizeX;
             var numShadowHeight = this._textureSize / mapSizeY;
-            
+
             for (var i = 0; i < numViews; i++) {
                 var shadowMap = this._shadowMaps[i];
 
                 var x = mapSizeX * (i % numShadowWidth);
                 var y = mapSizeY * Math.floor(i / numShadowHeight);
-                
+
                 if (this._viewportDimension.length <= i) {
                     this._viewportDimension.push(vec4.fromValues(x, y, mapSizeX, mapSizeY));
                 } else {

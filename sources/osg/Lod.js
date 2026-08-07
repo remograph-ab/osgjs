@@ -206,6 +206,7 @@ utils.createPrototypeNode(
             var zeroVector = vec3.create();
             var eye = vec3.create();
             var viewModel = mat4.create();
+            var mvOverride = mat4.create();
 
             return function(visitor) {
                 var traversalMode = visitor.traversalMode;
@@ -220,9 +221,18 @@ utils.createPrototypeNode(
                     case NodeVisitor.TRAVERSE_ACTIVE_CHILDREN:
                         var requiredRange = 0;
 
+                        // Optional LOD camera override (e.g. shadow-map cull): pick
+                        // the LOD level as seen by the main camera, not the current
+                        // (shadow) camera.
+                        var lodOverride = visitor.getLODCameraOverride();
+
                         if (this._rangeMode === Lod.DISTANCE_FROM_EYE_POINT) {
                             // Calculate distance from viewpoint
                             var matrix = visitor.getCurrentModelViewMatrix();
+                            if (lodOverride) {
+                                mat4.mul(mvOverride, lodOverride.viewShift, matrix);
+                                matrix = mvOverride;
+                            }
                             mat4.invert(viewModel, matrix);
                             vec3.transformMat4(eye, zeroVector, viewModel);
                             var d = vec3.distance(this.getBound().center(), eye);
@@ -230,7 +240,16 @@ utils.createPrototypeNode(
                         } else {
                             // SPOTSCALE: To avoid distorted bounding spheres near edges of screen resulting in
                             // larger pixel area than bounding sphere straight ahead, use radius-based calculation from OSG instead:
-                            requiredRange = this.clampedPixelSize(this.getBound(), visitor.getViewport(), visitor.getCurrentProjectionMatrix(), visitor.getCurrentModelViewMatrix()) / visitor.getLODScale();
+                            var vp = lodOverride ? lodOverride.viewport : visitor.getViewport();
+                            var proj = lodOverride
+                                ? lodOverride.projection
+                                : visitor.getCurrentProjectionMatrix();
+                            var mv = visitor.getCurrentModelViewMatrix();
+                            if (lodOverride) {
+                                mat4.mul(mvOverride, lodOverride.viewShift, mv);
+                                mv = mvOverride;
+                            }
+                            requiredRange = this.clampedPixelSize(this.getBound(), vp, proj, mv) / visitor.getLODScale();
                             // Square pixels as before
                             requiredRange = Math.pow(requiredRange, 2.0);
                           

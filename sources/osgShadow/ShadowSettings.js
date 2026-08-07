@@ -34,6 +34,14 @@ var ShadowSettings = function(options) {
 
     this.textureFormat = Texture.RGBA;
 
+    // Directional light only.
+    // When set (world units), the shadow map is fitted to the part of the
+    // camera view frustum within this distance instead of the whole scene.
+    // This dramatically increases shadow resolution near the camera for large
+    // scenes; geometry farther than this distance is progressively unshadowed.
+    // undefined keeps the legacy whole-scene fit.
+    this.shadowMaxDistance = undefined;
+
     // either orthogonal (non-fov) or perpsective (fov)
     this.shadowProjection = 'fov';
     // fov size: can be infered from spotlight angle
@@ -87,6 +95,12 @@ ShadowSettings.prototype = {
     },
     getTextureSize: function() {
         return this.textureSize;
+    },
+    setShadowMaxDistance: function(distance) {
+        this.shadowMaxDistance = distance;
+    },
+    getShadowMaxDistance: function() {
+        return this.shadowMaxDistance;
     },
     setTextureType: function(tt) {
         this.textureType = tt;
