@@ -874,9 +874,67 @@ utils.createPrototypeObject(
             // uniform self-shadow over the whole bounded region. Capping the near side
             // to ~1.5 * radius keeps the range fit to the region on scenes of any size
             // (small scenes already had a small bbox, which is why they worked).
-            var depthCapTowardLight = radius * 1.5;
+            // Live-tunable headroom (world metres) for diagnosing tall-caster
+            // (tree crown) clipping. SHADOW_DEPTHPAD adds extra toward-sun (near)
+            // headroom on top of the adaptive amount below; SHADOW_FARPAD extends
+            // the away-from-sun (far) side. Both default to 0. The receiver depth
+            // bias is now texel/world-referenced (range-independent), so widening
+            // this range no longer detaches shadows.
+            var depthPad = (typeof window !== 'undefined' && window.SHADOW_DEPTHPAD) || 0.0;
+            var farPad = (typeof window !== 'undefined' && window.SHADOW_FARPAD) || 0.0;
+
+            // Toward-sun (near-plane) headroom beyond the region sphere. Casters
+            // standing UP-SUN of the crisp region still cast INTO it: a caster of
+            // height H throws a shadow of horizontal length H/tan(elev), whose tip
+            // can land inside the region, and that caster's crown projects onto the
+            // light axis a distance ~ H / sin(elev) beyond the region edge. So the
+            // near plane must reach that far toward the sun or tall crowns are
+            // clipped and their shadows are truncated -- worse at low sun (1/sin
+            // grows) and on smaller regions. We size the headroom as
+            // max(0.5*radius, K / sin(elev)); the 0.5*radius floor preserves the
+            // previous 1.5*radius behaviour for high-sun / large-region views that
+            // already worked. sin(elev) = -eyeDir.z (eyeDir is the light TRAVEL dir).
+            var sinElev = Math.max(-eyeDir[2], 0.15); // floor ~8.6deg to bound low-sun blow-up
+            var depthK = typeof window !== 'undefined' && window.SHADOW_DEPTHK != null
+                ? window.SHADOW_DEPTHK
+                : ShadowMap.CASTER_UPSUN_REACH;
+            var autoHeadroom = Math.max(radius * 0.5, depthK / sinElev);
+            var depthCapTowardLight = radius + autoHeadroom + depthPad;
             if (projMin < -depthCapTowardLight) projMin = -depthCapTowardLight;
-            projMax = radius;
+            projMax = radius + farPad;
+
+            // Footprint (ortho XY) expansion for tall casters. The shadow footprint
+            // plane is perpendicular to the light, so a vertical caster of height H
+            // projects its crown a distance H*cos(elev) away from its base along the
+            // map's "up" axis. The crown shares its footprint position with the
+            // shadow TIP, so if a tall tree stands within H*cos(elev) of the ortho
+            // edge, its crown falls OUTSIDE the +/-radius square and is clipped,
+            // truncating the shadow in a straight line at the footprint boundary
+            // (visible in the F9 overlay as crowns sliced flat at the frame edge).
+            // Grow the ortho half-extent by maxCasterHeight*cos(elev) so crowns stay
+            // inside. This costs a little resolution (larger world area, same texels)
+            // but only as much as needed and only when the sun is not overhead.
+            // Tunable: window.SHADOW_CASTERHEIGHT (metres), window.SHADOW_XYPAD.
+            var cosElev = Math.sqrt(Math.max(0.0, 1.0 - eyeDir[2] * eyeDir[2]));
+            var casterHeight = typeof window !== 'undefined' && window.SHADOW_CASTERHEIGHT != null
+                ? window.SHADOW_CASTERHEIGHT
+                : ShadowMap.MAX_CASTER_HEIGHT;
+            var xyPad = (typeof window !== 'undefined' && window.SHADOW_XYPAD) || 0.0;
+            var orthoRadius = radius + casterHeight * cosElev + xyPad;
+
+            // Diagnostic: expand ONLY the caster DEPTH planes (near/far along the
+            // light), leaving the XY footprint -- and therefore texel resolution and
+            // the texel-referenced depth bias -- unchanged. XY expansion was already
+            // tested (SHADOW_CASTERHEIGHT, no effect), so this isolates whether the
+            // tree caster is being clipped by the near/far depth planes. If the
+            // truncation FILLS IN, it is a depth-clip sizing bug. If it PERSISTS, the
+            // caster geometry is genuinely absent (LOD/paging). SHADOW_HUGE may be a
+            // number (metres of extra depth headroom each side); true => 8000.
+            if (typeof window !== 'undefined' && window.SHADOW_HUGE) {
+                var hugeDepth = window.SHADOW_HUGE === true ? 2000.0 : Number(window.SHADOW_HUGE);
+                projMin = Math.min(projMin, -hugeDepth);
+                projMax = Math.max(projMax, hugeDepth);
+            }
 
             var margin = radius * 0.05 + ShadowMap.EPSILON;
 
@@ -889,19 +947,19 @@ utils.createPrototypeObject(
 
             var up = this.getUp(eyeDir);
             mat4.lookAtDirection(view, eyePos, eyeDir, up);
-            mat4.ortho(projection, -radius, radius, -radius, radius, zNear, zFar);
+            mat4.ortho(projection, -orthoRadius, orthoRadius, -orthoRadius, orthoRadius, zNear, zFar);
 
             // texel snapping: quantize the region center to the shadow-map grid.
             // Applied to the view matrix translation so the receiver (which reads
             // the full view matrix but a centered projection) stays in sync.
-            var worldUnitsPerTexel = 2.0 * radius / this._textureSize;
+            var worldUnitsPerTexel = 2.0 * orthoRadius / this._textureSize;
             var cxView = view[0] * center[0] + view[4] * center[1] + view[8] * center[2] + view[12];
             var cyView = view[1] * center[0] + view[5] * center[1] + view[9] * center[2] + view[13];
             view[12] += Math.round(cxView / worldUnitsPerTexel) * worldUnitsPerTexel - cxView;
             view[13] += Math.round(cyView / worldUnitsPerTexel) * worldUnitsPerTexel - cyView;
 
-            this._projection[0] = radius;
-            this._projection[1] = radius;
+            this._projection[0] = orthoRadius;
+            this._projection[1] = orthoRadius;
             this._projection[2] = 1.0;
 
             this._depthRange[0] = zNear;
@@ -1062,11 +1120,25 @@ utils.createPrototypeObject(
         // now try for a the tightest frustum
         // possible for shadowcasting
         frameShadowCastingFrustum: function(cullVisitor) {
+            // When the bounded (max-distance) fit is active, clamp the projection
+            // near/far to our stable, crown-inclusive bounded range instead of the
+            // cull-computed geometry near/far. Otherwise the projection near plane
+            // sits at whatever the cull measured (which can be in front of tall
+            // instanced crowns near the sun edge) and clips those crowns during
+            // rasterization, truncating their shadows. The bounded range already
+            // includes the toward-sun headroom (SHADOW_DEPTHPAD), so using it for
+            // both the clip and the depth encode keeps caster/receiver consistent.
+            var clampNear = this._depthRange[0];
+            var clampFar = this._depthRange[1];
+            if (this._boundedActive && !this._emptyCasterScene) {
+                clampNear = this._boundedDepthRange[0];
+                clampFar = this._boundedDepthRange[1];
+            }
             if (!this._infiniteFrustum) {
                 CullVisitor.prototype.clampProjectionMatrix(
                     this._projectionMatrix,
-                    this._depthRange[0],
-                    this._depthRange[1],
+                    clampNear,
+                    clampFar,
                     cullVisitor.getNearFarRatio(),
                     this._depthRange
                 );
@@ -1110,6 +1182,21 @@ utils.createPrototypeObject(
                 this._texture.setViewMatrix(this._viewMatrix);
                 this._texture.setProjection(this._projection);
                 this._texture.setDepthRange(this._depthRange);
+            }
+
+            // Push the live debug selector every frame. The ShadowReceiveAttribute's
+            // apply() is cached by the State (the attribute instance is unchanged and
+            // never dirtied), so reading window.SHADOW_RXDEBUG there only ever ran
+            // once -- the uniform stayed frozen at its initial value. Update the
+            // shared uniform here, on the guaranteed per-frame receive path, so the
+            // console toggle actually takes effect.
+            if (this._shadowReceiveAttribute) {
+                var rxUniforms = this._shadowReceiveAttribute.getOrCreateUniforms();
+                rxUniforms.debugRegion.setFloat(
+                    typeof window !== 'undefined' && window.SHADOW_RXDEBUG
+                        ? Number(window.SHADOW_RXDEBUG) || 0.0
+                        : 0.0
+                );
             }
         },
 
@@ -1164,7 +1251,8 @@ utils.createPrototypeObject(
             // cast geometries into depth shadow map
             cullVisitor.pushStateSet(this._casterStateSet);
 
-            this._cameraShadow.setEnableFrustumCulling(true);
+            var noCull = typeof window !== 'undefined' && window.SHADOW_NOCULL;
+            this._cameraShadow.setEnableFrustumCulling(!noCull);
             this._cameraShadow.setComputeNearFar(true);
 
             if (this._debug) {
@@ -1209,7 +1297,10 @@ utils.createPrototypeObject(
             var invShadowView = this._lodTmpInvView || (this._lodTmpInvView = mat4.create());
             mat4.invert(invShadowView, this._viewMatrix);
             mat4.mul(lodOverride.viewShift, cullVisitor.getCurrentModelViewMatrix(), invShadowView);
-            cullVisitor.setLODCameraOverride(lodOverride);
+            var noLodOverride = typeof window !== 'undefined' && window.SHADOW_NOLODOVERRIDE;
+            if (!noLodOverride) {
+                cullVisitor.setLODCameraOverride(lodOverride);
+            }
 
             // do RTT from the camera traversal mimicking light pos/orient
             this._cameraShadow.accept(cullVisitor);
@@ -1314,5 +1405,20 @@ utils.createPrototypeObject(
 );
 
 ShadowMap.EPSILON = 5e-3;
+
+// Default toward-sun (near-plane) headroom coefficient, in world metres, for the
+// bounded max-distance fit. The actual headroom is max(0.5*radius, K/sin(elev)),
+// so tall casters standing up-sun of the crisp region still cast into it without
+// their crowns being clipped (see makeOrthoBoundedFromViewFrustum). Live-tunable
+// via window.SHADOW_DEPTHK. ~200 m covers tall (scaled) instanced trees down to a
+// low sun; the 1/sin(elev) scaling grows it automatically as the sun lowers.
+ShadowMap.CASTER_UPSUN_REACH = 200.0;
+
+// Default assumed maximum caster height (world metres) for the footprint (ortho
+// XY) expansion that keeps tall tree crowns from being clipped at the shadow-map
+// edge. The footprint half-extent is grown by MAX_CASTER_HEIGHT*cos(elev) (a
+// vertical caster of height H offsets its crown H*cos(elev) within the footprint).
+// Live-tunable via window.SHADOW_CASTERHEIGHT. ~60 m covers tall (scaled) trees.
+ShadowMap.MAX_CASTER_HEIGHT = 60.0;
 
 export default ShadowMap;

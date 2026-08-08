@@ -353,7 +353,8 @@ var CompilerFragment = {
             shadowViewLook: this.getOrCreateUniform(textureUniforms['ViewLook' + suffix]),
 
             shadowDepthRange: this.getOrCreateUniform(textureUniforms['DepthRange' + suffix]),
-            shadowBias: this.getOrCreateUniform(shadowUniforms.bias)
+            shadowBias: this.getOrCreateUniform(shadowUniforms.bias),
+            debugRegion: this.getOrCreateUniform(shadowUniforms.debugRegion)
         };
 
         if (shadowReceive.getAtlas())

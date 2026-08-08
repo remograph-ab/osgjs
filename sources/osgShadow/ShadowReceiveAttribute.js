@@ -124,7 +124,8 @@ utils.createPrototypeStateAttribute(
 
             obj.uniforms[typeMember] = {
                 bias: Uniform.createFloat(this.getUniformName('bias')),
-                normalBias: Uniform.createFloat(this.getUniformName('normalBias'))
+                normalBias: Uniform.createFloat(this.getUniformName('normalBias')),
+                debugRegion: Uniform.createFloat(this.getUniformName('debugRegion'))
             };
 
             return obj.uniforms[typeMember];
@@ -167,6 +168,11 @@ utils.createPrototypeStateAttribute(
 
             uniformMap.normalBias.setFloat(this._normalBias);
             uniformMap.bias.setFloat(this._bias);
+            uniformMap.debugRegion.setFloat(
+                typeof window !== 'undefined' && window.SHADOW_RXDEBUG
+                    ? Number(window.SHADOW_RXDEBUG) || 0.0
+                    : 0.0
+            );
         },
 
         // need a isEnabled to let the ShaderGenerator to filter
