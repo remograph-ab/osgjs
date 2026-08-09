@@ -26,6 +26,11 @@ var ShadowTextureAtlas = function() {
     this._renderSize = vec2.create();
     this._dirtyHash = true;
     this._hash = '';
+
+    // Cascaded shadow maps: when > 1, the slots in _lightNumberArray are cascade
+    // indices (0..N-1) of a single light whose light number is _shadowLightNumber.
+    this._cascadeCount = 1;
+    this._shadowLightNumber = -1;
 };
 
 ShadowTextureAtlas.uniforms = {};
@@ -43,7 +48,18 @@ utils.createPrototypeStateAttribute(
         },
 
         hasLightNumber: function(lightNum) {
+            if (this._cascadeCount > 1 && lightNum === this._shadowLightNumber) return true;
             return this._lightNumberArray.indexOf(lightNum) !== -1;
+        },
+
+        getCascadeCount: function() {
+            return this._cascadeCount;
+        },
+
+        setCascadeInfo: function(lightNumber, count) {
+            this._shadowLightNumber = lightNumber;
+            this._cascadeCount = count;
+            this._dirtyHash = true;
         },
 
         setLightNumberArray: function(lightNumberArray) {
@@ -178,6 +194,7 @@ utils.createPrototypeStateAttribute(
                 hash += '_' + this._lightNumberArray[i];
             }
             hash += '_' + this._type;
+            hash += '_c' + this._cascadeCount;
             return hash;
         },
 

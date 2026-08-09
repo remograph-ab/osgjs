@@ -174,6 +174,21 @@ var ShadowMap = function(settings, shadowTexture) {
     this._boundedActive = false;
     this._boundedDepthRange = vec2.create();
 
+    // Cascaded Shadow Maps (CSM/PSSM). When this map is one cascade of a
+    // multi-cascade set, _cascadeCount > 1 and _cascadeIndex is this cascade's
+    // 0-based index. Each cascade fits the bounded frustum to its own sub-slice
+    // of the view depth range [camNear, maxDistance] (see the split scheme in
+    // makeOrthoBoundedFromViewFrustum) and writes its matrices into its own atlas
+    // slot keyed by _cascadeIndex (not the light number, so cascades sharing one
+    // light do not collide). _cascadeCount <= 1 => plain single-map behaviour.
+    this._cascadeIndex = 0;
+    this._cascadeCount = 1;
+    this._cascadeLambda = 0.5;
+    // View-space far distance of this cascade's slice (set each frame during the
+    // bounded fit). The receiver uses the set of cascade fars to select which
+    // cascade shadows each fragment by its camera depth.
+    this._cascadeSliceFar = 0.0;
+
     if (settings) this.setShadowSettings(settings);
 
     this._infiniteFrustum = true;
@@ -259,6 +274,33 @@ utils.createPrototypeObject(
 
         getMaxDistance: function() {
             return this._maxDistance;
+        },
+
+        // Cascaded shadow maps: mark this map as cascade `index` of `count`
+        // cascades, using PSSM split blend `lambda` (0 = uniform, 1 = logarithmic).
+        setCascade: function(index, count, lambda) {
+            this._cascadeIndex = index;
+            this._cascadeCount = count;
+            if (lambda !== undefined) this._cascadeLambda = lambda;
+        },
+
+        getCascadeIndex: function() {
+            return this._cascadeIndex;
+        },
+
+        getCascadeCount: function() {
+            return this._cascadeCount;
+        },
+
+        getCascadeSliceFar: function() {
+            return this._cascadeSliceFar;
+        },
+
+        // Key used to index this map's slot in a (cascaded) shadow texture atlas.
+        // For cascades this is the cascade index so several maps of the SAME light
+        // occupy distinct atlas slots; otherwise it is the light number.
+        getShadowSlotKey: function() {
+            return this._cascadeCount > 1 ? this._cascadeIndex : this._light.getLightNumber();
         },
 
         setCastsShadowDrawTraversalMask: function(mask) {
@@ -796,6 +838,54 @@ utils.createPrototypeObject(
             var sliceFar = Math.min(camFar, maxDistance);
             if (sliceFar <= sliceNear) return false;
 
+            // Cascaded shadow maps: restrict this cascade to its own sub-slice of
+            // [camNear, sliceFar] using a PSSM split (blend of a logarithmic split,
+            // which distributes resolution well in perspective, and a uniform split).
+            // Each cascade then fits the bounded frustum tightly to its sub-slice,
+            // giving near cascades high resolution and far cascades wide coverage --
+            // which is exactly what a single bounded map cannot do at once.
+            if (this._cascadeCount > 1) {
+                var n = this._cascadeCount;
+                var idx = this._cascadeIndex;
+                var lambda = this._cascadeLambda;
+
+                // Cascaded coverage: extend somewhat beyond shadowMaxDistance (up to
+                // the camera far plane) so distant casters -- notably instanced trees
+                // -- still project shadows instead of truncating at shadowMaxDistance.
+                var crispFar = sliceFar; // = min(camFar, maxDistance)
+                var farMult =
+                    typeof window !== 'undefined' && window.SHADOW_CASCADE_FARMULT != null
+                        ? window.SHADOW_CASCADE_FARMULT
+                        : ShadowMap.CASCADE_FAR_MULT;
+                var coverFar = Math.min(camFar, crispFar * farMult);
+
+                // Distribute ALL cascades over [camNear, coverFar] with a PSSM split
+                // (blend of a logarithmic split -- which gives near cascades small,
+                // crisp ranges and far cascades wider ranges -- and a uniform split).
+                // This keeps every cascade reasonably high-resolution, unlike cramming
+                // all far distance into one giant low-res cascade (which under-resolves
+                // thin tree shadows so they wash out under bias/PCF while tall building
+                // shadows survive -- the observed "trees truncate, buildings don't").
+                var csmNear = camNear;
+                var ratio = coverFar / csmNear;
+                var fA = idx / n;
+                var fB = (idx + 1) / n;
+                var splitA =
+                    lambda * (csmNear * Math.pow(ratio, fA)) +
+                    (1.0 - lambda) * (csmNear + (coverFar - csmNear) * fA);
+                var splitB =
+                    lambda * (csmNear * Math.pow(ratio, fB)) +
+                    (1.0 - lambda) * (csmNear + (coverFar - csmNear) * fB);
+                // Small overlap toward the near side so the seam between cascades
+                // (where the receiver switches which cascade shadows it) blends
+                // rather than showing a hard resolution step.
+                if (idx > 0) splitA -= (splitB - splitA) * 0.1;
+                sliceNear = splitA;
+                sliceFar = splitB;
+                if (sliceFar <= sliceNear) return false;
+            }
+            this._cascadeSliceFar = sliceFar;
+
             // camera position and forward direction in the shadowedScene world frame
             var eyeToWorld = this._tmpMatrixBis;
             mat4.invert(eyeToWorld, cullVisitor.getCurrentModelViewMatrix());
@@ -984,13 +1074,14 @@ utils.createPrototypeObject(
                     var azShadowDeg = Math.atan2(-eyeDir[0], -eyeDir[1]) * 180 / Math.PI;
                     // eslint-disable-next-line no-console
                     console.log(
-                        '[shadow] sunElev=' + elevationDeg.toFixed(1) + 'deg' +
+                        '[shadow] cascade=' + this._cascadeIndex + '/' + this._cascadeCount +
+                            ' sunElev=' + elevationDeg.toFixed(1) + 'deg' +
                             ' shadowAz=' + azShadowDeg.toFixed(1) + 'deg' +
-                            ' lightTravel=' + eyeDir[0].toFixed(3) + ',' + eyeDir[1].toFixed(3) + ',' + eyeDir[2].toFixed(3) +
+                            ' sliceNear=' + sliceNear.toFixed(1) +
+                            ' sliceFar=' + sliceFar.toFixed(1) +
                             ' radius=' + radius.toFixed(1) +
+                            ' orthoRadius=' + orthoRadius.toFixed(1) +
                             ' range=' + (zFar - zNear).toFixed(1) +
-                            ' projMin=' + projMin.toFixed(1) +
-                            ' projMax=' + projMax.toFixed(1) +
                             ' center=' + center[0].toFixed(0) + ',' + center[1].toFixed(0) + ',' + center[2].toFixed(0)
                     );
                 }
@@ -1174,10 +1265,10 @@ utils.createPrototypeObject(
             // even if noDepth, need to call those to make sure they are created
             // in shadowTexture / shadowTextureAtlas
             if (this._lightNumberArrayIndex !== -1) {
-                var lightNumber = this._light.getLightNumber();
-                this._texture.setViewMatrix(lightNumber, this._viewMatrix);
-                this._texture.setProjection(lightNumber, this._projection);
-                this._texture.setDepthRange(lightNumber, this._depthRange);
+                var slotKey = this.getShadowSlotKey();
+                this._texture.setViewMatrix(slotKey, this._viewMatrix);
+                this._texture.setProjection(slotKey, this._projection);
+                this._texture.setDepthRange(slotKey, this._depthRange);
             } else {
                 this._texture.setViewMatrix(this._viewMatrix);
                 this._texture.setProjection(this._projection);
@@ -1398,6 +1489,10 @@ utils.createPrototypeObject(
 
         getLight: function() {
             return this._light;
+        },
+
+        getShadowReceiveAttribute: function() {
+            return this._shadowReceiveAttribute;
         }
     }),
     'osgShadow',
@@ -1420,5 +1515,13 @@ ShadowMap.CASTER_UPSUN_REACH = 200.0;
 // vertical caster of height H offsets its crown H*cos(elev) within the footprint).
 // Live-tunable via window.SHADOW_CASTERHEIGHT. ~60 m covers tall (scaled) trees.
 ShadowMap.MAX_CASTER_HEIGHT = 60.0;
+
+// Default coverage multiplier for cascaded (CSM) shadows. The cascades are
+// log-distributed over [near, min(cameraFar, shadowMaxDistance * CASCADE_FAR_MULT)]
+// so shadows extend somewhat beyond shadowMaxDistance (distant instanced trees keep
+// casting) while every cascade stays reasonably high-resolution. Live-tunable via
+// window.SHADOW_CASCADE_FARMULT. Keep modest: too large makes the far cascade so
+// coarse that thin tree shadows wash out under bias/PCF.
+ShadowMap.CASCADE_FAR_MULT = 2.5;
 
 export default ShadowMap;

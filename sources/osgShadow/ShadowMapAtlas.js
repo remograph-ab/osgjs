@@ -52,6 +52,10 @@ var ShadowMapAtlas = function(settings) {
     this._numShadowWidth = this._textureSize / this._shadowMapSize;
     this._numShadowHeight = this._textureSize / this._shadowMapSize;
 
+    // Cascaded shadow maps state.
+    this._cascaded = false;
+    this._cascadeSplits = new Float32Array(4);
+
     this._cameraClear = new Camera();
     this._cameraClear.setName('shadowAtlasCameraClear');
     this._cameraClear.setRenderOrder(Camera.PRE_RENDER, 0);
@@ -268,14 +272,52 @@ utils.createPrototypeObject(
             return shadowMap;
         },
 
+        // Cascaded shadow maps: allocate `numCascades` shadow maps for a single
+        // directional light, each fitting one view-depth sub-slice. They share this
+        // atlas texture (one slot each) and are combined in the receiver shader.
+        addCascadedLight: function(light, numCascades, lambda) {
+            if (!light) {
+                notify.warn('addCascadedLight: no light');
+                return -1;
+            }
+            if (numCascades > this._numShadowWidth * this._numShadowHeight) {
+                notify.warn('addCascadedLight: not enough atlas slots for cascades');
+            }
+
+            this._lights.length = 0;
+            this._shadowMaps.length = 0;
+            this._shadowSettings.setLight(light);
+
+            for (var i = 0; i < numCascades; i++) {
+                var shadowMap = new ShadowMap(this._shadowSettings, this._texture);
+                shadowMap.setCascade(i, numCascades, lambda);
+
+                var receive = shadowMap.getShadowReceiveAttribute();
+                receive.setAtlas(true);
+                receive.setNumCascades(numCascades);
+
+                this._lights.push(light);
+                this._shadowMaps.push(shadowMap);
+
+                if (this._shadowedScene) shadowMap.setShadowedScene(this._shadowedScene);
+            }
+
+            this._texture.setCascadeInfo(light.getLightNumber(), numCascades);
+            this._cascaded = true;
+
+            this.recomputeViewports();
+
+            return this._shadowMaps;
+        },
+
         /** initialize the ShadowedScene and local cached data structures.*/
         init: function() {
             if (!this._shadowedScene) return;
 
             this.initTexture();
             var lightNumberArray = [];
-            for (var k = 0; k < this._lights.length; k++) {
-                lightNumberArray.push(this._lights[k].getLightNumber());
+            for (var k = 0; k < this._shadowMaps.length; k++) {
+                lightNumberArray.push(this._shadowMaps[k].getShadowSlotKey());
             }
             this._texture.setLightNumberArray(lightNumberArray);
 
@@ -313,6 +355,7 @@ utils.createPrototypeObject(
 
             for (var i = 0; i < numViews; i++) {
                 var shadowMap = this._shadowMaps[i];
+                var slotKey = shadowMap.getShadowSlotKey();
 
                 var x = mapSizeX * (i % numShadowWidth);
                 var y = mapSizeY * Math.floor(i / numShadowHeight);
@@ -323,10 +366,7 @@ utils.createPrototypeObject(
                     vec4.set(this._viewportDimension[i], x, y, mapSizeX, mapSizeY);
                 }
 
-                this._texture.setLightShadowMapSize(
-                    this._lights[i].getLightNumber(),
-                    this._viewportDimension[i]
-                );
+                this._texture.setLightShadowMapSize(slotKey, this._viewportDimension[i]);
 
                 shadowMap.dirty();
             }
@@ -409,6 +449,19 @@ utils.createPrototypeObject(
                 if (shadowMap.isContinuousUpdate() || shadowMap.needRedraw()) {
                     shadowMap.cullShadowCasting(cullVisitor, bbox);
                 }
+            }
+
+            // Cascaded shadow maps: publish each cascade's view-space far distance so
+            // the receiver can select which cascade shadows a fragment by its camera
+            // depth (proper CSM selection instead of unioning all cascades).
+            if (this._cascaded && this._shadowMaps.length > 0) {
+                var splits = this._cascadeSplits;
+                for (var s = 0; s < 4; s++) {
+                    var sm = this._shadowMaps[s];
+                    splits[s] = sm ? sm.getCascadeSliceFar() : 1e12;
+                }
+                var receive = this._shadowMaps[0].getShadowReceiveAttribute();
+                receive.getOrCreateUniforms().cascadeSplits.setFloat4(splits);
             }
         },
 

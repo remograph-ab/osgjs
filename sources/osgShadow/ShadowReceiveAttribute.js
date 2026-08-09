@@ -33,6 +33,11 @@ var ShadowReceiveAttribute = function(lightNum, disable) {
     this._enable = !disable;
     this._isAtlasTexture = false;
 
+    // Cascaded shadow maps: number of cascade sub-maps packed in the atlas for
+    // this light. 1 => plain single shadow map. When > 1 the fragment compiler
+    // samples each cascade sub-rect and combines them.
+    this._numCascades = 1;
+
     this._dirtyHash = true;
     this._hash = '';
 };
@@ -65,6 +70,15 @@ utils.createPrototypeStateAttribute(
         },
         setAtlas: function(v) {
             this._isAtlasTexture = v;
+        },
+
+        getNumCascades: function() {
+            return this._numCascades;
+        },
+        setNumCascades: function(v) {
+            if (v === this._numCascades) return;
+            this._numCascades = v;
+            this._dirtyHash = true;
         },
 
         setBias: function(bias) {
@@ -125,7 +139,8 @@ utils.createPrototypeStateAttribute(
             obj.uniforms[typeMember] = {
                 bias: Uniform.createFloat(this.getUniformName('bias')),
                 normalBias: Uniform.createFloat(this.getUniformName('normalBias')),
-                debugRegion: Uniform.createFloat(this.getUniformName('debugRegion'))
+                debugRegion: Uniform.createFloat(this.getUniformName('debugRegion')),
+                cascadeSplits: Uniform.createFloat4(this.getUniformName('cascadeSplits'))
             };
 
             return obj.uniforms[typeMember];
@@ -190,7 +205,7 @@ utils.createPrototypeStateAttribute(
         },
 
         _computeInternalHash: function() {
-            return this.getTypeMember() + '_' + this.getKernelSizePCF();
+            return this.getTypeMember() + '_' + this.getKernelSizePCF() + '_c' + this._numCascades;
         },
         
         compare: function(attr) {

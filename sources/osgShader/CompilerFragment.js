@@ -334,12 +334,15 @@ var CompilerFragment = {
         }
     },
 
-    getInputsFromShadow: function(shadowReceive, shadowTexture, lighted, lightNum) {
+    getInputsFromShadow: function(shadowReceive, shadowTexture, lighted, lightNum, slotKey) {
         var shadowUniforms = shadowReceive.getOrCreateUniforms();
         var tUnit = this._shadowsTextures.indexOf(shadowTexture);
         var textureUniforms = shadowTexture.getOrCreateUniforms(tUnit);
 
-        var suffix = shadowReceive.getAtlas() ? '_' + lightNum : '';
+        // For a plain atlas the sub-map is keyed by light number; for cascades it
+        // is keyed by the cascade slot index passed in slotKey.
+        var key = slotKey !== undefined ? slotKey : lightNum;
+        var suffix = shadowReceive.getAtlas() ? '_' + key : '';
         var inputs = {
             lighted: lighted,
             normalWorld: this.getOrCreateNormalizedFrontModelNormal(),
@@ -389,6 +392,114 @@ var CompilerFragment = {
         var shadowTexture = this._getShadowTextureFromLightNum(this._shadowsTextures, lightNum);
         var shadowReceive = this._getShadowReceiveAttributeFromLightNum(this._shadows, lightNum);
         if (!shadowTexture || !shadowReceive) return undefined;
+
+        var numCascades = shadowReceive.getNumCascades ? shadowReceive.getNumCascades() : 1;
+
+        // Cascaded shadow maps: sample each cascade sub-map, then select the finest
+        // cascade whose view-depth band covers the fragment (proper CSM selection).
+        // Each cascade's shadowReceive returns 1.0 (lit) outside its fitted region,
+        // but combining by multiply takes the union of every cascade, so each
+        // cascade's far-edge truncation and self-shadow acne stack up and stay
+        // visible. Instead we pick one cascade per fragment by its camera view
+        // depth, blending over a short overlap at each split so seams are smooth.
+        if (numCascades > 1) {
+            var defsC = shadowReceive.getDefines();
+            var shadowUniformsC = shadowReceive.getOrCreateUniforms();
+            var results = [];
+            for (var c = 0; c < numCascades; c++) {
+                var inputsC = this.getInputsFromShadow(
+                    shadowReceive,
+                    shadowTexture,
+                    lighted,
+                    lightNum,
+                    c
+                );
+                var outC = this.createVariable('float');
+                this.getNode('ShadowReceive')
+                    .inputs(inputsC)
+                    .outputs({ result: outC })
+                    .addDefines(defsC);
+                results.push(outC);
+            }
+
+            var combined = this.createVariable('float');
+            var inputsSel = {
+                viewVertex: this.getOrCreateViewVertex(),
+                splits: this.getOrCreateUniform(shadowUniformsC.cascadeSplits),
+                dbg: this.getOrCreateUniform(shadowUniformsC.debugRegion)
+            };
+            var codeLines = ['float d = -%viewVertex.z;', 'float shadow = %r0;'];
+            var splitComp = ['x', 'y', 'z', 'w'];
+            for (var k = 0; k < numCascades; k++) {
+                inputsSel['r' + k] = results[k];
+                if (k > 0) {
+                    var comp = splitComp[k - 1];
+                    codeLines.push(
+                        'shadow = mix(shadow, %r' +
+                            k +
+                            ', smoothstep(%splits.' +
+                            comp +
+                            ' * 0.9, %splits.' +
+                            comp +
+                            ', d));'
+                    );
+                }
+            }
+            codeLines.push('%output = shadow;');
+            // Depth-based far fade: fade the shadow toward fully lit as the fragment
+            // approaches the outermost cascade's far distance (coverFar), over a wide
+            // band. Without this the outermost cascade ends on a hard line where its
+            // casters stop (the region's caster/slice far edge is INSIDE the ortho
+            // footprint, so the receiver's radial edge-fade never triggers there),
+            // which reads as a razor-straight cut through a dense forest while tall,
+            // sparse building shadows appear to reach further. Fading over distance
+            // makes shadows dissolve gently with range like the rest of the scene.
+            var lastComp = splitComp[numCascades - 1];
+            codeLines.push(
+                '%output = mix(%output, 1.0, smoothstep(%splits.' +
+                    lastComp +
+                    ' * 0.7, %splits.' +
+                    lastComp +
+                    ', d));'
+            );
+            // Decisive diagnostics (window.SHADOW_RXDEBUG):
+            //   34 -> union of ALL cascades (min = darkest). If truncation vanishes,
+            //         the shadow IS in some cascade and per-fragment selection is the
+            //         bug. If it persists, no cascade covers the region (fit/receiver).
+            //   31/32/33 -> force cascade 0/1/2 result for EVERY fragment, revealing
+            //         each cascade's true ground coverage in isolation.
+            var unionExpr = '%r0';
+            for (var m = 1; m < numCascades; m++) {
+                unionExpr = 'min(' + unionExpr + ', %r' + m + ')';
+            }
+            codeLines.push('if (%dbg > 33.5 && %dbg < 34.5) { %output = ' + unionExpr + '; }');
+            for (var n = 0; n < numCascades && n < 3; n++) {
+                var lo = (31 + n - 0.5).toFixed(1);
+                var hi = (31 + n + 0.5).toFixed(1);
+                codeLines.push(
+                    'if (%dbg > ' + lo + ' && %dbg < ' + hi + ') { %output = %r' + n + '; }'
+                );
+                // Coverage mode: 71/72/73 force cascade n; shadowReceive returns the
+                // region-coverage tint (0.4 covered / 1.0 outside) for that cascade.
+                var clo = (71 + n - 0.5).toFixed(1);
+                var chi = (71 + n + 0.5).toFixed(1);
+                codeLines.push(
+                    'if (%dbg > ' + clo + ' && %dbg < ' + chi + ') { %output = %r' + n + '; }'
+                );
+                // Raw-occlusion mode: 81/82/83 force cascade n; shadowReceive returns
+                // the raw PCF compare (dark = occluder present in that cascade's tile).
+                var rlo = (81 + n - 0.5).toFixed(1);
+                var rhi = (81 + n + 0.5).toFixed(1);
+                codeLines.push(
+                    'if (%dbg > ' + rlo + ' && %dbg < ' + rhi + ') { %output = %r' + n + '; }'
+                );
+            }
+            this.getNode('InlineCode')
+                .code(codeLines.join('\n'))
+                .inputs(inputsSel)
+                .outputs({ output: combined });
+            return combined;
+        }
 
         var inputs = this.getInputsFromShadow(shadowReceive, shadowTexture, lighted, lightNum);
 

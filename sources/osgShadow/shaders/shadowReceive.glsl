@@ -366,6 +366,15 @@ float shadowReceive(const in bool lighted,
         if (debugRegion > 20.5 && debugRegion < 21.5) {
             return res;
         }
+        // Per-cascade raw occlusion (window.SHADOW_RXDEBUG 81/82/83 with the
+        // compiler force-cascade): return the RAW PCF compare for the forced
+        // cascade's tile. Dark = an occluder IS present in that cascade's caster
+        // map at this fragment; white = no occluder in the tile. Decisive for
+        // whether the near cascades' caster tiles actually contain tree/building
+        // depth or are empty.
+        if (debugRegion > 80.5 && debugRegion < 83.5) {
+            return res;
+        }
         bool noSnap = debugRegion > 21.5 && debugRegion < 22.5;
 
         // Snap faint partial-shadowing up to fully lit. Inside the bounded region
@@ -409,6 +418,16 @@ float shadowReceive(const in bool lighted,
             return shadow;
         }
         return dbgReason == sel ? 0.0 : 1.0;
+    }
+
+    // Coverage visualization (window.SHADOW_RXDEBUG 71/72/73 with the compiler
+    // force-cascade). Returns 0.4 (gray) where this cascade's region COVERS the
+    // fragment (regardless of whether a caster occludes it) and 1.0 (white) where
+    // the fragment falls outside the cascade's fitted region (earlyOut). This
+    // reveals, per cascade, exactly which ground area each cascade can shadow --
+    // decisive for whether the near cascades even reach the foreground.
+    if (debugRegion > 69.5 && debugRegion < 79.5) {
+        return earlyOut ? 1.0 : 0.4;
     }
 
     return shadow;
