@@ -847,26 +847,28 @@ utils.createPrototypeObject(
             if (this._cascadeCount > 1) {
                 var n = this._cascadeCount;
                 var idx = this._cascadeIndex;
-                var lambda = this._cascadeLambda;
+                var lambda =
+                    typeof window !== 'undefined' && window.SHADOW_CASCADE_LAMBDA != null
+                        ? window.SHADOW_CASCADE_LAMBDA
+                        : this._cascadeLambda;
 
-                // Cascaded coverage: extend somewhat beyond shadowMaxDistance (up to
-                // the camera far plane) so distant casters -- notably instanced trees
-                // -- still project shadows instead of truncating at shadowMaxDistance.
-                var crispFar = sliceFar; // = min(camFar, maxDistance)
+                // Splits must not depend on the live camera near/far: those change every
+                // frame as the camera moves, which resized every cascade (and its texel
+                // grid) each frame and made all shadows shimmer.
+                var crispFar = maxDistance;
                 var farMult =
                     typeof window !== 'undefined' && window.SHADOW_CASCADE_FARMULT != null
                         ? window.SHADOW_CASCADE_FARMULT
                         : ShadowMap.CASCADE_FAR_MULT;
-                var coverFar = Math.min(camFar, crispFar * farMult);
+                var coverFar = crispFar * farMult;
 
-                // Distribute ALL cascades over [camNear, coverFar] with a PSSM split
+                // Distribute ALL cascades over [csmNear, coverFar] with a PSSM split
                 // (blend of a logarithmic split -- which gives near cascades small,
                 // crisp ranges and far cascades wider ranges -- and a uniform split).
-                // This keeps every cascade reasonably high-resolution, unlike cramming
-                // all far distance into one giant low-res cascade (which under-resolves
-                // thin tree shadows so they wash out under bias/PCF while tall building
-                // shadows survive -- the observed "trees truncate, buildings don't").
-                var csmNear = camNear;
+                var csmNear =
+                    typeof window !== 'undefined' && window.SHADOW_CASCADE_NEAR != null
+                        ? window.SHADOW_CASCADE_NEAR
+                        : ShadowMap.CASCADE_SPLIT_NEAR;
                 var ratio = coverFar / csmNear;
                 var fA = idx / n;
                 var fB = (idx + 1) / n;
@@ -992,6 +994,9 @@ utils.createPrototypeObject(
             var depthCapTowardLight = radius + autoHeadroom + depthPad;
             if (projMin < -depthCapTowardLight) projMin = -depthCapTowardLight;
             projMax = radius + farPad;
+            // Keep the whole region below 0.85 of the depth range, clear of the receiver's
+            // far-plane fade (0.9..1.0) and cut (>1.0), whatever the toward-sun headroom.
+            projMax = Math.max(projMax, (radius - projMin) / 0.85 + projMin);
 
             // Footprint (ortho XY) expansion for tall casters. The shadow footprint
             // plane is perpendicular to the light, so a vertical caster of height H
@@ -1039,14 +1044,13 @@ utils.createPrototypeObject(
             mat4.lookAtDirection(view, eyePos, eyeDir, up);
             mat4.ortho(projection, -orthoRadius, orthoRadius, -orthoRadius, orthoRadius, zNear, zFar);
 
-            // texel snapping: quantize the region center to the shadow-map grid.
-            // Applied to the view matrix translation so the receiver (which reads
-            // the full view matrix but a centered projection) stays in sync.
+            // texel snapping: quantize the view translation so a fixed world point always
+            // maps to the same shadow texel. (Snapping the region center did nothing: the
+            // eye sits on the light ray through it, so its view x/y is always 0, and the
+            // grid slid with the camera, making shadow edges crawl while moving.)
             var worldUnitsPerTexel = 2.0 * orthoRadius / this._textureSize;
-            var cxView = view[0] * center[0] + view[4] * center[1] + view[8] * center[2] + view[12];
-            var cyView = view[1] * center[0] + view[5] * center[1] + view[9] * center[2] + view[13];
-            view[12] += Math.round(cxView / worldUnitsPerTexel) * worldUnitsPerTexel - cxView;
-            view[13] += Math.round(cyView / worldUnitsPerTexel) * worldUnitsPerTexel - cyView;
+            view[12] = Math.round(view[12] / worldUnitsPerTexel) * worldUnitsPerTexel;
+            view[13] = Math.round(view[13] / worldUnitsPerTexel) * worldUnitsPerTexel;
 
             this._projection[0] = orthoRadius;
             this._projection[1] = orthoRadius;
@@ -1343,7 +1347,22 @@ utils.createPrototypeObject(
             cullVisitor.pushStateSet(this._casterStateSet);
 
             var noCull = typeof window !== 'undefined' && window.SHADOW_NOCULL;
-            this._cameraShadow.setEnableFrustumCulling(!noCull);
+            // CSM tree-shadow truncation fix with bounded cost:
+            // Long up-sun casters (instanced tree blocks) can be frustum-culled out
+            // of the near/mid cascades even though their shadows land inside the
+            // visible receiver region. Disabling frustum culling globally
+            // (SHADOW_NOCULL=true) fixes it but is very expensive. Instead, relax
+            // culling only on the first N cascades (default 2), where the issue is
+            // visible; keep culling on the far cascade(s) to preserve performance.
+            var noCullCascadeCount =
+                typeof window !== 'undefined' && window.SHADOW_NOCULL_CASCADES != null
+                    ? Math.max(0, Number(window.SHADOW_NOCULL_CASCADES) || 0)
+                    : ShadowMap.NOCULL_CASCADES;
+            var cascadeNoCull =
+                this._cascadeCount > 1 &&
+                this._cascadeIndex >= 0 &&
+                this._cascadeIndex < noCullCascadeCount;
+            this._cameraShadow.setEnableFrustumCulling(!(noCull || cascadeNoCull));
             this._cameraShadow.setComputeNearFar(true);
 
             if (this._debug) {
@@ -1505,9 +1524,17 @@ ShadowMap.EPSILON = 5e-3;
 // bounded max-distance fit. The actual headroom is max(0.5*radius, K/sin(elev)),
 // so tall casters standing up-sun of the crisp region still cast into it without
 // their crowns being clipped (see makeOrthoBoundedFromViewFrustum). Live-tunable
-// via window.SHADOW_DEPTHK. ~200 m covers tall (scaled) instanced trees down to a
-// low sun; the 1/sin(elev) scaling grows it automatically as the sun lowers.
-ShadowMap.CASTER_UPSUN_REACH = 200.0;
+// via window.SHADOW_DEPTHK.
+//
+// K is a caster HEIGHT: a caster of height H standing up-sun of the region projects
+// at most H/sin(elev) beyond it along the light. It was 1500, which on small
+// cascades made the range mostly empty padding and pushed near receivers into the
+// far-plane fade and cut, so shadows faded and vanished when approaching them.
+ShadowMap.CASTER_UPSUN_REACH = 60.0;
+// Relax shadow-caster frustum culling on the first N cascades. Was 2: a workaround
+// for symptoms of trees casting colour instead of depth, and it drew the whole
+// loaded scene into the shadow map twice per frame.
+ShadowMap.NOCULL_CASCADES = 0;
 
 // Default assumed maximum caster height (world metres) for the footprint (ortho
 // XY) expansion that keeps tall tree crowns from being clipped at the shadow-map
@@ -1523,5 +1550,9 @@ ShadowMap.MAX_CASTER_HEIGHT = 60.0;
 // window.SHADOW_CASCADE_FARMULT. Keep modest: too large makes the far cascade so
 // coarse that thin tree shadows wash out under bias/PCF.
 ShadowMap.CASCADE_FAR_MULT = 2.5;
+
+// Fixed near distance (metres) the CSM splits are computed from, instead of the
+// per-frame camera near plane. Live-tunable via window.SHADOW_CASCADE_NEAR.
+ShadowMap.CASCADE_SPLIT_NEAR = 1.0;
 
 export default ShadowMap;

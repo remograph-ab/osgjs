@@ -1,6 +1,7 @@
 import utils from 'osg/utils';
 import Node from 'osg/Node';
 import NodeVisitor from 'osg/NodeVisitor';
+import notify from 'osg/notify';
 import { mat4 } from 'osg/glMatrix';
 import { vec2 } from 'osg/glMatrix';
 import { vec3 } from 'osg/glMatrix';
@@ -224,7 +225,11 @@ utils.createPrototypeNode(
                         // Optional LOD camera override (e.g. shadow-map cull): pick
                         // the LOD level as seen by the main camera, not the current
                         // (shadow) camera.
-                        var lodOverride = visitor.getLODCameraOverride();
+                        // Guarded: plain NodeVisitors do not implement this optional
+                        // method, only CullVisitor does.
+                        var lodOverride = visitor.getLODCameraOverride
+                            ? visitor.getLODCameraOverride()
+                            : undefined;
 
                         if (this._rangeMode === Lod.DISTANCE_FROM_EYE_POINT) {
                             // Calculate distance from viewpoint
@@ -279,6 +284,7 @@ utils.createPrototypeNode(
                         if (this._range.length < numChildren) numChildren = this._range.length;
 
                         this._activeChildren = [];
+                        var selectedIndex = -1;
                         for (var j = 0; j < numChildren; ++j) {
                             if (
                                 this._range[j][0] <= requiredRange &&
@@ -287,6 +293,39 @@ utils.createPrototypeNode(
                                 var child = this.children[j];
                                 child.accept(visitor);
                                 this._activeChildren.push(child);
+                                selectedIndex = j;
+                            }
+                        }
+
+                        // Optional diagnostic (window.LOD_DEBUG): a Lod draws NOTHING when
+                        // requiredRange falls outside every range. During a shadow-map cull
+                        // the range is computed through the LOD camera override, so a
+                        // mismatch with the main pass means the caster and the visible
+                        // geometry disagree -- typically a whole block that is visible but
+                        // casts no shadow. Report each node once.
+                        if (typeof window !== 'undefined' && window.LOD_DEBUG) {
+                            if (lodOverride) {
+                                this._lodDebugShadow = selectedIndex;
+                                this._lodDebugShadowRange = requiredRange;
+                            } else {
+                                this._lodDebugMain = selectedIndex;
+                                this._lodDebugMainRange = requiredRange;
+                            }
+                            if (
+                                !this._lodDebugReported &&
+                                this._lodDebugShadow !== undefined &&
+                                this._lodDebugMain !== undefined &&
+                                this._lodDebugShadow !== this._lodDebugMain
+                            ) {
+                                this._lodDebugReported = true;
+                                var lodMessage =
+                                    '[lod] mismatch node=' + this.getName() +
+                                    ' mainChild=' + this._lodDebugMain +
+                                    ' shadowChild=' + this._lodDebugShadow +
+                                    ' mainRange=' + this._lodDebugMainRange.toFixed(2) +
+                                    ' shadowRange=' + this._lodDebugShadowRange.toFixed(2) +
+                                    ' ranges=' + JSON.stringify(this._range);
+                                notify.warn(lodMessage);
                             }
                         }
                         break;

@@ -116,11 +116,13 @@ float shadowReceive(const in bool lighted,
 
 #ifdef _NORMAL_OFFSET
 
-            // http://www.dissidentlogic.com/old/images/NormalOffsetShadows/GDC_Poster_NormalOffset.png
-            float normalOffsetScale = clamp(1.0  - N_Dot_L, 0.0 , 1.0);
-            normalOffsetScale *= abs((shadowVertexEye.z - shadowDepthRange.x) * invDepthRange);
-            normalOffsetScale *= max(shadowProjection.x, shadowProjection.y);
-            normalOffsetScale *= normalBias * invDepthRange;
+            // Normal-offset bias in shadow TEXELS (normalBias = texels at grazing angles),
+            // so it is equally effective in every cascade regardless of its size/range.
+            float offsetTexelWorld = 2.0 * shadowProjection.x * shadowSize.x;
+#ifdef _ATLAS_SHADOW
+            offsetTexelWorld = 2.0 * shadowProjection.x / max(atlasSize.z, 1.0);
+#endif
+            float normalOffsetScale = offsetTexelWorld * normalBias * sqrt(clamp(1.0 - N_Dot_L * N_Dot_L, 0.0, 1.0));
 
 
             vec4 shadowNormalShift =  vec4(normalWorld, 0.0) * normalOffsetScale;
@@ -225,17 +227,39 @@ float shadowReceive(const in bool lighted,
             // foreground objects sit near the frustum-slice sphere edge and a wide
             // fade would drop their shadows.
             float fadeRadial = length(shadowUV * 2.0 - 1.0);
+#ifndef _CASCADED_SHADOW
+            // Cascades are selected by view depth, so the camera sits at the edge of
+            // the near cascade's footprint; this fade would weaken shadows next to it.
             shadowFade = 1.0 - smoothstep(0.92, 1.0, fadeRadial);
+#endif
 
             // most precision near 0, make sure we are near 0 and in [0,1]
             shadowReceiverZ = - shadowVertexEye.z;
             shadowReceiverZ =  (shadowReceiverZ - shadowDepthRange.x) * invDepthRange;
+
+            // Where does this receiver actually sit in the light-space depth range?
+            // 41 -> shadowReceiverZ as grayscale (black = at the near/toward-sun plane,
+            //       white = at/past the far plane). Anything above ~0.9 is inside the
+            //       far-plane fade below and is being silently weakened; white means it
+            //       is past the far cut entirely. Measures directly what the depth-range
+            //       sizing (SHADOW_DEPTHK / SHADOW_FARPAD) is doing.
+            if (debugRegion > 40.5 && debugRegion < 41.5) {
+                return clamp(shadowReceiverZ, 0.0, 1.0);
+            }
 
             // Fade out as the receiver approaches the far plane of the bounded
             // region. Just inside the far cutoff the caster depth map may not cover
             // the fragment, so it over-shadows into a thin dark band right before
             // the hard earlyOut below; fading avoids that seam.
             shadowFade = min(shadowFade, 1.0 - smoothstep(0.9, 1.0, shadowReceiverZ));
+
+            // 42 -> the combined fade factor (radial edge fade * far-plane fade) as
+            // grayscale. White = no fading, black = this fragment can never show a
+            // shadow however good the caster map is. Unlike the dbgReason codes the
+            // fades are silent, so this is the only way to see them.
+            if (debugRegion > 41.5 && debugRegion < 42.5) {
+                return clamp(shadowFade, 0.0, 1.0);
+            }
 
             if(shadowReceiverZ < 0.0 && !noNearCut) {
                 earlyOut = true; // notably behind camera (closer to light than region)
@@ -327,6 +351,13 @@ float shadowReceive(const in bool lighted,
         // which shifts the sample along the surface normal and so does not detach
         // the shadow.
         float worldTexel = 2.0 * shadowProjection.x * shadowSize.x; // world units / texel
+#ifdef _ATLAS_SHADOW
+        // In an atlas each cascade/light occupies a TILE of atlasSize.zw texels, so its
+        // ortho half-extent spans the tile, not the whole atlas. shadowSize is 1/atlas,
+        // which under-estimates the world size of a texel by atlas/tile and left the bias
+        // that many times too small (acne, which the res snap below then had to hide).
+        worldTexel = 2.0 * shadowProjection.x / max(atlasSize.z, 1.0);
+#endif
         // Slope-scaled: on grazing surfaces (surface nearly parallel to the light,
         // N_Dot_L small) the receiver depth changes by ~worldTexel*tan(angle) across
         // one shadow texel, so a constant bias leaves a periodic stripe of acne.

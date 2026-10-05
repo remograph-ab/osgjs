@@ -22,7 +22,9 @@ ShaderGenerator.prototype = {
     // setShaderCompiler that will be used to createShader
     setShaderCompiler: function(ShaderCompiler) {
         this._ShaderCompiler = ShaderCompiler;
-        if (!ShaderCompiler._validAttributeTypeMemberCache)
+        // Own-property check: an ES6 subclass compiler inherits its parent's static
+        // cache, which would silently ignore the subclass's own stateAttributeConfig.
+        if (!Object.prototype.hasOwnProperty.call(ShaderCompiler, '_validAttributeTypeMemberCache'))
             this._computeStateAttributeCache(ShaderCompiler);
     },
 

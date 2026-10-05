@@ -170,6 +170,7 @@ utils.createPrototypeStateAttribute(
 
             if (this.getPrecision() !== 'UNSIGNED_BYTE') defines.push('#define _FLOATTEX');
             if (this.getAtlas()) defines.push('#define _ATLAS_SHADOW');
+            if (this._numCascades > 1) defines.push('#define _CASCADED_SHADOW');
             if (this.getNormalBias()) defines.push('#define _NORMAL_OFFSET');
             if (this.getJitterOffset() !== 'none') defines.push('#define _JITTER_OFFSET');
 

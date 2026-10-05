@@ -655,6 +655,43 @@ var lightSourceApply = function(node) {
 
 var tempVec = vec3.create();
 var loggedOnce = false;
+// Optional diagnostic (window.CAST_DEBUG): reports why a drawable is dropped during a
+// cull. A drawable can be skipped by the near/far computation or by a cull callback,
+// independently of frustum culling, so a node can be missing from the shadow map even
+// when frustum culling is disabled. Reports each node once per reason and pass.
+// Drawables are often unnamed, so identify them by the nearest named ancestor in the
+// current node path (for instanced vegetation that is the block node, whose name tells
+// the tile and the model).
+var cullDebugCenter = vec3.create();
+var describeCullNode = function(cull, node) {
+    var description = node.getName() ? node.getName() : 'unnamed';
+    var nodePath = cull.nodePath;
+    for (var i = nodePath.length - 1; i >= 0; --i) {
+        var name = nodePath[i].getName();
+        if (name) {
+            description += ' under=' + name;
+            break;
+        }
+    }
+    var bb = node.getBoundingBox();
+    if (bb && bb.valid()) {
+        var center = bb.center(cullDebugCenter);
+        description +=
+            ' at=' +
+            center[0].toFixed(0) + ',' + center[1].toFixed(0) + ',' + center[2].toFixed(0);
+    }
+    return description;
+};
+
+var reportCullDrop = function(cull, node, reason) {
+    if (typeof window === 'undefined' || !window.CAST_DEBUG) return;
+    var pass = cull.getLODCameraOverride() ? 'shadow' : 'main';
+    var key = pass + ':' + reason;
+    if (node._cullDropReported === key) return;
+    node._cullDropReported = key;
+    notify.warn('[cull] dropped ' + describeCullNode(cull, node) + ' pass=' + pass + ' reason=' + reason);
+};
+
 var geometryApply = function(node) {
     this._numGeometry++;
 
@@ -662,6 +699,7 @@ var geometryApply = function(node) {
     var bb = node.getBoundingBox();
     if (this._computeNearFar && !node.isNearFarControlled() && bb.valid()) {
         if (!this.updateCalculatedNearFar(modelview, node)) {
+            reportCullDrop(this, node, 'nearfar');
             return;
         }
     }
@@ -670,7 +708,10 @@ var geometryApply = function(node) {
     // is a leaf node, else traversing the graph would be an
     // issue because we use modelview after
     var ccb = node.getCullCallback();
-    if (ccb && !ccb.cull(node, this)) return;
+    if (ccb && !ccb.cull(node, this)) {
+        reportCullDrop(this, node, 'cullcallback');
+        return;
+    }
 
     var stateset = node.getStateSet();
     if (stateset) this.pushStateSet(stateset);
@@ -688,6 +729,29 @@ var geometryApply = function(node) {
         }
     } else {
         this.pushLeaf(node, depth);
+        if (typeof window !== 'undefined' && window.CAST_DEBUG) {
+            // Track drawables reaching the render bin in each pass. A drawable that is
+            // drawn by the main camera but has not been drawn by the shadow camera for a
+            // while never made it into the shadow map at all (culled above this node),
+            // which is reported here since no drop reason applies in that case.
+            var now = Date.now();
+            if (this.getLODCameraOverride()) {
+                node._cullDrawnShadow = now;
+            } else {
+                if (node._cullDrawnMainSince === undefined) {
+                    node._cullDrawnMainSince = now;
+                }
+                node._cullDrawnMain = now;
+                if (
+                    !node._cullMissingReported &&
+                    now - node._cullDrawnMainSince > 2000 &&
+                    (node._cullDrawnShadow === undefined || now - node._cullDrawnShadow > 2000)
+                ) {
+                    node._cullMissingReported = true;
+                    notify.warn('[cull] never reaches shadow pass ' + describeCullNode(this, node));
+                }
+            }
+        }
     }
 
     this.prePopGeometry(this, node);
