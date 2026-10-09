@@ -271,14 +271,41 @@ ShaderGenerator.prototype = {
 
             var cachedProgram = this._getProgram(hash, state, attributes, textureAttributes);
             if (cachedProgram !== undefined) {
+                if (cachedProgram.isParallelCompiling()) {
+                    if (!cachedProgram.isParallelCompileDone()) return this._getWaitingProgram(state);
+                    cachedProgram.finishParallelCompile();
+                }
                 return cachedProgram;
             }
 
             var program = this._createProgram(hash, state, attributes, textureAttributes);
+            if (program.isParallelCompiling()) return this._getWaitingProgram(state);
 
             return program;
         };
     })(),
+
+    // Stand-in while a program compiles in the background: draws nothing, so the object
+    // pops in a few frames late instead of stalling the frame. It must really read Vertex:
+    // an instanced draw needs at least one enabled attribute with divisor 0.
+    _getWaitingProgram: function(state) {
+        if (this._waitingProgram) return this._waitingProgram;
+        var program = new Program(
+            new Shader(
+                Shader.VERTEX_SHADER,
+                'attribute vec3 Vertex;\nvoid main(void) { gl_Position = vec4(Vertex, -1.0); }\n'
+            ),
+            new Shader(
+                Shader.FRAGMENT_SHADER,
+                '#define SHADER_NAME WaitParallel\nprecision lowp float;\nvoid main(void) { gl_FragColor = vec4(0.0); }\n'
+            )
+        );
+        program.setActiveUniforms({});
+        program.generated = true;
+        program.apply(state);
+        this._waitingProgram = program;
+        return program;
+    },
 
     _getProgram: function(hash) {
         return this._cache[hash];
@@ -324,7 +351,13 @@ ShaderGenerator.prototype = {
         program.generated = true;
         this._cache[hash] = program;
 
-        program.apply(state);
+        if (typeof window !== 'undefined' && window.SHADER_LOG) {
+            this._programCount = (this._programCount || 0) + 1;
+            // eslint-disable-next-line no-console
+            console.log('[shader] new program #' + this._programCount + ' ' + shaderGen.getFragmentShaderName() + ' hashLength=' + hash.length);
+        }
+
+        if (!program.startParallelCompile(state)) program.apply(state);
 
         return program;
     },

@@ -1386,11 +1386,9 @@ utils.createPrototypeObject(
                 for (i = 0, l = foreignUniformKeys.length; i < l; i++) {
                     name = foreignUniformKeys[i];
                     var uniStack = uniformMapStack[name];
-                    if (uniStack) {
-                        uniform = uniStack._globalDefault;
-                        cacheData = this._copyUniformEntry(uniform);
-                        cache.push(cacheData);
-                    }
+                    // Always reserve a slot so cache indices stay aligned with foreignUniformKeys,
+                    // even for a uniform that does not exist yet (filled on first apply).
+                    cache.push(uniStack ? this._copyUniformEntry(uniStack._globalDefault) : undefined);
                 }
             }
 
@@ -1416,6 +1414,9 @@ utils.createPrototypeObject(
             var uniformArrayLength = internalArray.length;
             if (uniformArrayLength <= 4) {
                 var uniformCache = cacheArray[indexCache];
+                if (uniformCache === undefined) {
+                    uniformCache = cacheArray[indexCache] = this._copyUniformEntry(uniform);
+                }
                 isCached = checkUniformCache[uniformArrayLength](internalArray, uniformCache);
             } else {
                 isCached = false;
@@ -1493,6 +1494,7 @@ utils.createPrototypeObject(
 
                 if (!hasStateSetUniformPair && !uniformStack) {
                     this._checkErrorUniform(uniformName);
+                    indexCache++;
                     continue;
                 }
 

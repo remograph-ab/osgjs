@@ -426,20 +426,27 @@ var CompilerFragment = {
             var inputsSel = {
                 viewVertex: this.getOrCreateViewVertex(),
                 splits: this.getOrCreateUniform(shadowUniformsC.cascadeSplits),
+                strength: this.getOrCreateUniform(shadowUniformsC.cascadeStrength),
                 dbg: this.getOrCreateUniform(shadowUniformsC.debugRegion)
             };
-            var codeLines = ['float d = -%viewVertex.z;', 'float shadow = %r0;'];
+            var codeLines = ['float d = -%viewVertex.z;'];
             var splitComp = ['x', 'y', 'z', 'w'];
             for (var k = 0; k < numCascades; k++) {
                 inputsSel['r' + k] = results[k];
-                if (k > 0) {
+                codeLines.push(
+                    'float c' + k + ' = clamp(1.0 - (1.0 - %r' + k + ') * %strength.' +
+                        splitComp[k] + ', 0.0, 1.0);'
+                );
+                if (k === 0) {
+                    codeLines.push('float shadow = c0;');
+                } else {
                     var comp = splitComp[k - 1];
                     codeLines.push(
-                        'shadow = mix(shadow, %r' +
+                        'shadow = mix(shadow, c' +
                             k +
                             ', smoothstep(%splits.' +
                             comp +
-                            ' * 0.9, %splits.' +
+                            ' * 0.75, %splits.' +
                             comp +
                             ', d));'
                     );

@@ -5,6 +5,7 @@ import GLObject from 'osg/GLObject';
 import StateAttribute from 'osg/StateAttribute';
 import ShaderProcessor from 'osgShader/ShaderProcessor';
 import Timer from 'osg/Timer';
+import WebGLCaps from 'osg/WebGLCaps';
 
 var shaderStats = Options.getOptionsURL().shaderStats ? {} : undefined;
 var forceSyncCompilation = Options.getOptionsURL().syncCompile;
@@ -86,6 +87,10 @@ var Program = function(vShader, fShader) {
 // static cache of glPrograms flagged for deletion, which will actually
 // be deleted in the correct GL context.
 Program._sDeletedGLProgramCache = new window.Map();
+
+// Compile generated programs in the background (KHR_parallel_shader_compile) when
+// supported. Turn off while loading if pop-in is worse than a longer load.
+Program.parallelCompile = true;
 
 // static method to delete Program
 Program.deleteGLProgram = function(gl, program) {
@@ -462,6 +467,46 @@ utils.createPrototypeStateAttribute(
             enableAsyncCompilation: function(placeHolder, frameNum) {
                 this._placeHolder = placeHolder;
                 this._asyncCompilation = frameNum;
+            },
+
+            // Starts compiling and linking without querying any status, so the driver can
+            // do it in the background (KHR_parallel_shader_compile). Returns false when not
+            // supported; the caller then falls back to the blocking apply().
+            startParallelCompile: function(state) {
+                if (forceSyncCompilation || !Program.parallelCompile) return false;
+                var ext = WebGLCaps.instance().getWebGLExtension('KHR_parallel_shader_compile');
+                if (!ext) return false;
+                if (!this._gl) this.setGraphicContext(state.getGraphicContext());
+                var gl = this._gl;
+                this.compile();
+                this._program = gl.createProgram();
+                if (this._attributeMap.Vertex) gl.bindAttribLocation(this._program, 0, 'Vertex');
+                this._glAttachAndLink(gl, this._program, this._vertex, this._fragment);
+                this._parallelExt = ext;
+                this._asyncCompilation = 1;
+                return true;
+            },
+
+            isParallelCompiling: function() {
+                return this._parallelExt !== undefined;
+            },
+
+            isParallelCompileDone: function() {
+                return this._gl.getProgramParameter(this._program, this._parallelExt.COMPLETION_STATUS_KHR);
+            },
+
+            // Only call once isParallelCompileDone(): the status queries no longer block.
+            finishParallelCompile: function() {
+                var gl = this._gl;
+                var vertexOk = this._glShaderCompilationResult(gl, this._vertex);
+                var fragmentOk = this._glShaderCompilationResult(gl, this._fragment);
+                this._compileClean = vertexOk && fragmentOk;
+                if (!this._compileClean) {
+                    gl.deleteProgram(this._program);
+                    this._program = null;
+                }
+                this._parallelExt = undefined;
+                this.getLinkResult(gl);
             },
 
             apply: function(state) {

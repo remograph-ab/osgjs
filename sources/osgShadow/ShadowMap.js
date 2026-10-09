@@ -878,10 +878,9 @@ utils.createPrototypeObject(
                 var splitB =
                     lambda * (csmNear * Math.pow(ratio, fB)) +
                     (1.0 - lambda) * (csmNear + (coverFar - csmNear) * fB);
-                // Small overlap toward the near side so the seam between cascades
-                // (where the receiver switches which cascade shadows it) blends
-                // rather than showing a hard resolution step.
-                if (idx > 0) splitA -= (splitB - splitA) * 0.1;
+                // Start before the previous split so the receiver's blend band between
+                // cascades (0.75..1.0 of each split, see CompilerFragment) is covered.
+                if (idx > 0) splitA *= 0.7;
                 sliceNear = splitA;
                 sliceFar = splitB;
                 if (sliceFar <= sliceNear) return false;

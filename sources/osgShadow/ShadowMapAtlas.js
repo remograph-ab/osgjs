@@ -55,6 +55,8 @@ var ShadowMapAtlas = function(settings) {
     // Cascaded shadow maps state.
     this._cascaded = false;
     this._cascadeSplits = new Float32Array(4);
+    // Per-cascade multiplier on shadow darkness, e.g. to darken blurrier far cascades.
+    this._cascadeStrengths = new Float32Array([1.0, 1.0, 1.0, 1.0]);
 
     this._cameraClear = new Camera();
     this._cameraClear.setName('shadowAtlasCameraClear');
@@ -462,6 +464,14 @@ utils.createPrototypeObject(
                 }
                 var receive = this._shadowMaps[0].getShadowReceiveAttribute();
                 receive.getOrCreateUniforms().cascadeSplits.setFloat4(splits);
+                receive.getOrCreateUniforms().cascadeStrength.setFloat4(this._cascadeStrengths);
+            }
+        },
+
+        // Multipliers (up to 4) on shadow darkness per cascade, near to far; 1 = unchanged.
+        setCascadeStrengths: function(strengths) {
+            for (var i = 0; i < 4; i++) {
+                this._cascadeStrengths[i] = strengths[i] !== undefined ? strengths[i] : 1.0;
             }
         },
 

@@ -140,7 +140,11 @@ utils.createPrototypeStateAttribute(
                 bias: Uniform.createFloat(this.getUniformName('bias')),
                 normalBias: Uniform.createFloat(this.getUniformName('normalBias')),
                 debugRegion: Uniform.createFloat(this.getUniformName('debugRegion')),
-                cascadeSplits: Uniform.createFloat4(this.getUniformName('cascadeSplits'))
+                cascadeSplits: Uniform.createFloat4(this.getUniformName('cascadeSplits')),
+                cascadeStrength: Uniform.createFloat4(
+                    [1.0, 1.0, 1.0, 1.0],
+                    this.getUniformName('cascadeStrength')
+                )
             };
 
             return obj.uniforms[typeMember];
