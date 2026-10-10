@@ -47,6 +47,14 @@ float getShadowPCF(
 
 #elif defined(_PCFx25)
 
+    // The rest of the inner 3x3 (the _PCFx9 branch above is not taken here). Without
+    // these the kernel had 20 of 25 taps: lopsided edges and lit areas at only 0.8.
+    res += TSF(.0, dx0);
+    res += TSF(.0, dx1);
+    res += TSF(dx1, dx0);
+    res += TSF(dx1, .0);
+    res += TSF(dx1, dx1);
+
     float dx02 = 2.0*dx0;
     float dy02 = 2.0*dy0;
     float dx2 = 2.0*dx1;
