@@ -44,8 +44,7 @@ float shadowReceive(const in bool lighted,
 
 
                     const in vec2 shadowDepthRange,
-                    const in float shadowBias,
-                    const in float debugRegion
+                    const in float shadowBias
                     OPT_ARG_atlasSize
                     OPT_ARG_normalBias
                     OPT_ARG_outDistance
@@ -56,12 +55,6 @@ float shadowReceive(const in bool lighted,
 
     // Calculate shadow amount
     float shadow = 1.0;
-
-    // diagnostic (window.SHADOW_RXDEBUG): records WHY a fragment ends up unshadowed
-    // so we can tell a region-boundary earlyOut apart from a caster/paging gap.
-    // 0=tested normally, 1=no casters, 2=behind cam, 3=outside light UV,
-    // 4=closer to light than region (near plane), 5=beyond region (far plane).
-    float dbgReason = 0.0;
 
     // NOTE: shadow occlusion is a geometric fact (is a caster between this
     // fragment and the light?) and must NOT be gated on whether the surface
@@ -75,7 +68,6 @@ float shadowReceive(const in bool lighted,
 
     if (shadowDepthRange.x == shadowDepthRange.y) {
         earlyOut = true;
-        dbgReason = 1.0;
     }
 
     vec4 shadowVertexEye;
@@ -192,32 +184,17 @@ float shadowReceive(const in bool lighted,
 
             if (shadowVertexProjected.w < 0.0) {
                 earlyOut = true; // notably behind camera
-                dbgReason = 2.0;
             }
 
         }
 
         if (!earlyOut) {
 
-            // Binary diagnosis toggles (window.SHADOW_RXDEBUG):
-            //   13 -> disable the light-UV (XY footprint) cut, clamp UV instead
-            //   14 -> disable the near-plane cut
-            //   15 -> disable the far-plane cut
-            // If the truncation disappears with one of these, that cut is the cause.
-            bool noUVCut = debugRegion > 12.5 && debugRegion < 13.5;
-            bool noNearCut = debugRegion > 13.5 && debugRegion < 14.5;
-            bool noFarCut = debugRegion > 14.5 && debugRegion < 15.5;
-
             shadowUV.xy = shadowVertexProjected.xy / shadowVertexProjected.w;
             shadowUV.xy = shadowUV.xy * 0.5 + 0.5;// mad like
 
             if (any(bvec4 ( shadowUV.x > 1., shadowUV.x < 0., shadowUV.y > 1., shadowUV.y < 0.))) {
-                if (noUVCut) {
-                    shadowUV.xy = clamp(shadowUV.xy, 0.0, 1.0);
-                } else {
-                    earlyOut = true;// limits of light frustum
-                    dbgReason = 3.0;
-                }
+                earlyOut = true;// limits of light frustum
             }
 
             // Radial (circular) fade toward the region edge instead of the square
@@ -237,33 +214,14 @@ float shadowReceive(const in bool lighted,
             shadowReceiverZ = - shadowVertexEye.z;
             shadowReceiverZ =  (shadowReceiverZ - shadowDepthRange.x) * invDepthRange;
 
-            // Where does this receiver actually sit in the light-space depth range?
-            // 41 -> shadowReceiverZ as grayscale (black = at the near/toward-sun plane,
-            //       white = at/past the far plane). Anything above ~0.9 is inside the
-            //       far-plane fade below and is being silently weakened; white means it
-            //       is past the far cut entirely. Measures directly what the depth-range
-            //       sizing (SHADOW_DEPTHK / SHADOW_FARPAD) is doing.
-            if (debugRegion > 40.5 && debugRegion < 41.5) {
-                return clamp(shadowReceiverZ, 0.0, 1.0);
-            }
-
             // Fade out as the receiver approaches the far plane of the bounded
             // region. Just inside the far cutoff the caster depth map may not cover
             // the fragment, so it over-shadows into a thin dark band right before
             // the hard earlyOut below; fading avoids that seam.
             shadowFade = min(shadowFade, 1.0 - smoothstep(0.9, 1.0, shadowReceiverZ));
 
-            // 42 -> the combined fade factor (radial edge fade * far-plane fade) as
-            // grayscale. White = no fading, black = this fragment can never show a
-            // shadow however good the caster map is. Unlike the dbgReason codes the
-            // fades are silent, so this is the only way to see them.
-            if (debugRegion > 41.5 && debugRegion < 42.5) {
-                return clamp(shadowFade, 0.0, 1.0);
-            }
-
-            if(shadowReceiverZ < 0.0 && !noNearCut) {
+            if(shadowReceiverZ < 0.0) {
                 earlyOut = true; // notably behind camera (closer to light than region)
-                dbgReason = 4.0;
             }
 
             // Beyond the far plane of the (bounded) shadow region: this fragment is
@@ -276,12 +234,8 @@ float shadowReceive(const in bool lighted,
             // the region is fit to the near view slice (empty air) and the whole
             // distant terrain reads as over-shadowed (the "dark square"). Treat
             // out-of-range receivers as un-shadowed instead.
-            if(shadowReceiverZ > 1.0 && !noFarCut) {
+            if(shadowReceiverZ > 1.0) {
                 earlyOut = true; // beyond the shadow region: no shadow here
-                dbgReason = 5.0;
-            }
-            if (noFarCut) {
-                shadowFade = 1.0; // don't fade either, so the extension is obvious
             }
 
         }
@@ -364,8 +318,8 @@ float shadowReceive(const in bool lighted,
         // Add a tan(angle) term, but keep it texel-referenced and capped so the
         // along-light push (peter-panning) stays bounded regardless of sun angle.
         float slopeTan = sqrt(1.0 - N_Dot_L * N_Dot_L) / clamp(N_Dot_L, 0.1, 1.0);
-        // shadowBias is repurposed as the base depth bias in TEXELS (live-tunable
-        // via setBias; see Viewer.js shadow keys). Constant base + slope term,
+        // shadowBias is the base depth bias in TEXELS (set via setBias).
+        // Constant base + slope term,
         // capped a few texels above the base so peter-panning stays bounded.
         float worldBias = worldTexel * (shadowBias + slopeTan);
         worldBias = min(worldBias, worldTexel * (shadowBias + 3.0));
@@ -388,26 +342,6 @@ float shadowReceive(const in bool lighted,
                                  OPT_INSTANCE_ARG_outDistance
                                  OPT_INSTANCE_ARG_jitter);
 
-        // Caster-side diagnosis (window.SHADOW_RXDEBUG):
-        //   21 -> show the RAW PCF compare result (before the snap/fade) as
-        //         grayscale: dark = shadow present in the map, white = no occluder.
-        //         If a truncated tree-shadow area is WHITE here, the caster itself
-        //         is missing there; if it's DARK, something downstream removes it.
-        //   22 -> disable the "snap faint shadow to lit" remap below.
-        if (debugRegion > 20.5 && debugRegion < 21.5) {
-            return res;
-        }
-        // Per-cascade raw occlusion (window.SHADOW_RXDEBUG 81/82/83 with the
-        // compiler force-cascade): return the RAW PCF compare for the forced
-        // cascade's tile. Dark = an occluder IS present in that cascade's caster
-        // map at this fragment; white = no occluder in the tile. Decisive for
-        // whether the near cascades' caster tiles actually contain tree/building
-        // depth or are empty.
-        if (debugRegion > 80.5 && debugRegion < 83.5) {
-            return res;
-        }
-        bool noSnap = debugRegion > 21.5 && debugRegion < 22.5;
-
         // Snap faint partial-shadowing up to fully lit. Inside the bounded region
         // even open, un-occluded terrain returns res slightly below 1.0 (PCF
         // filtering + micro-relief self-shadowing), so the whole region reads
@@ -417,9 +351,7 @@ float shadowReceive(const in bool lighted,
         // 1.0 (fully lit) so only genuine shadows (res well below threshold) darken
         // the ground, while a soft gradient is kept below the threshold for real
         // penumbrae. shadowBias-independent, so it does not affect contact/acne.
-        if (!noSnap) {
-            res = smoothstep(0.0, 0.85, res);
-        }
+        res = smoothstep(0.0, 0.85, res);
 #ifdef _OUT_DISTANCE
         shadow = mix(1.0, res, shadowFade);
         outDistance *= shadowDepthRange.y - shadowDepthRange.x; // world space distance
@@ -427,38 +359,6 @@ float shadowReceive(const in bool lighted,
         shadow = res;
         shadow = mix(1.0, shadow, shadowFade);
 #endif  // _OUT_DISTANCE
-    }
-
-    // SHADOW_RXDEBUG isolation: set window.SHADOW_RXDEBUG to a reason code and the
-    // whole scene renders FULLY LIT (white) except fragments cut for that exact
-    // reason, which render PURE BLACK -- maximum contrast so the truncation cause
-    // is unmistakable in a screenshot. Reasons:
-    //   3 = outside light UV (XY footprint edge)
-    //   4 = before near plane (closer to light than region)
-    //   5 = beyond far plane (farther from light than region)
-    //   1 = no casters at all,  2 = behind camera
-    // Legacy grayscale (all-reasons) view kept on SHADOW_RXDEBUG = 9.
-    if (debugRegion > 0.5 && debugRegion < 12.5) {
-        float sel = floor(debugRegion + 0.5);
-        if (sel == 9.0) {
-            if (dbgReason == 3.0) return 0.10;
-            if (dbgReason == 5.0) return 0.35;
-            if (dbgReason == 4.0) return 0.85;
-            if (dbgReason == 1.0) return 0.60;
-            if (dbgReason == 2.0) return 0.20;
-            return shadow;
-        }
-        return dbgReason == sel ? 0.0 : 1.0;
-    }
-
-    // Coverage visualization (window.SHADOW_RXDEBUG 71/72/73 with the compiler
-    // force-cascade). Returns 0.4 (gray) where this cascade's region COVERS the
-    // fragment (regardless of whether a caster occludes it) and 1.0 (white) where
-    // the fragment falls outside the cascade's fitted region (earlyOut). This
-    // reveals, per cascade, exactly which ground area each cascade can shadow --
-    // decisive for whether the near cascades even reach the foreground.
-    if (debugRegion > 69.5 && debugRegion < 79.5) {
-        return earlyOut ? 1.0 : 0.4;
     }
 
     return shadow;

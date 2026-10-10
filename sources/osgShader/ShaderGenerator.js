@@ -351,12 +351,6 @@ ShaderGenerator.prototype = {
         program.generated = true;
         this._cache[hash] = program;
 
-        if (typeof window !== 'undefined' && window.SHADER_LOG) {
-            this._programCount = (this._programCount || 0) + 1;
-            // eslint-disable-next-line no-console
-            console.log('[shader] new program #' + this._programCount + ' ' + shaderGen.getFragmentShaderName() + ' hashLength=' + hash.length);
-        }
-
         if (!program.startParallelCompile(state)) program.apply(state);
 
         return program;

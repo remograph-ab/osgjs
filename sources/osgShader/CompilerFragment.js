@@ -356,8 +356,7 @@ var CompilerFragment = {
             shadowViewLook: this.getOrCreateUniform(textureUniforms['ViewLook' + suffix]),
 
             shadowDepthRange: this.getOrCreateUniform(textureUniforms['DepthRange' + suffix]),
-            shadowBias: this.getOrCreateUniform(shadowUniforms.bias),
-            debugRegion: this.getOrCreateUniform(shadowUniforms.debugRegion)
+            shadowBias: this.getOrCreateUniform(shadowUniforms.bias)
         };
 
         if (shadowReceive.getAtlas())
@@ -426,8 +425,7 @@ var CompilerFragment = {
             var inputsSel = {
                 viewVertex: this.getOrCreateViewVertex(),
                 splits: this.getOrCreateUniform(shadowUniformsC.cascadeSplits),
-                strength: this.getOrCreateUniform(shadowUniformsC.cascadeStrength),
-                dbg: this.getOrCreateUniform(shadowUniformsC.debugRegion)
+                strength: this.getOrCreateUniform(shadowUniformsC.cascadeStrength)
             };
             var codeLines = ['float d = -%viewVertex.z;'];
             var splitComp = ['x', 'y', 'z', 'w'];
@@ -469,38 +467,6 @@ var CompilerFragment = {
                     lastComp +
                     ', d));'
             );
-            // Decisive diagnostics (window.SHADOW_RXDEBUG):
-            //   34 -> union of ALL cascades (min = darkest). If truncation vanishes,
-            //         the shadow IS in some cascade and per-fragment selection is the
-            //         bug. If it persists, no cascade covers the region (fit/receiver).
-            //   31/32/33 -> force cascade 0/1/2 result for EVERY fragment, revealing
-            //         each cascade's true ground coverage in isolation.
-            var unionExpr = '%r0';
-            for (var m = 1; m < numCascades; m++) {
-                unionExpr = 'min(' + unionExpr + ', %r' + m + ')';
-            }
-            codeLines.push('if (%dbg > 33.5 && %dbg < 34.5) { %output = ' + unionExpr + '; }');
-            for (var n = 0; n < numCascades && n < 3; n++) {
-                var lo = (31 + n - 0.5).toFixed(1);
-                var hi = (31 + n + 0.5).toFixed(1);
-                codeLines.push(
-                    'if (%dbg > ' + lo + ' && %dbg < ' + hi + ') { %output = %r' + n + '; }'
-                );
-                // Coverage mode: 71/72/73 force cascade n; shadowReceive returns the
-                // region-coverage tint (0.4 covered / 1.0 outside) for that cascade.
-                var clo = (71 + n - 0.5).toFixed(1);
-                var chi = (71 + n + 0.5).toFixed(1);
-                codeLines.push(
-                    'if (%dbg > ' + clo + ' && %dbg < ' + chi + ') { %output = %r' + n + '; }'
-                );
-                // Raw-occlusion mode: 81/82/83 force cascade n; shadowReceive returns
-                // the raw PCF compare (dark = occluder present in that cascade's tile).
-                var rlo = (81 + n - 0.5).toFixed(1);
-                var rhi = (81 + n + 0.5).toFixed(1);
-                codeLines.push(
-                    'if (%dbg > ' + rlo + ' && %dbg < ' + rhi + ') { %output = %r' + n + '; }'
-                );
-            }
             this.getNode('InlineCode')
                 .code(codeLines.join('\n'))
                 .inputs(inputsSel)

@@ -341,63 +341,6 @@ utils.createPrototypeNode(
                             }
                         }
 
-                        // --- DEBUG: LOD-selection match check (TEMPORARY) ---
-                        // Set window.SHADOW_LOD_DEBUG = true to compare which LOD
-                        // child this node picks for the main camera vs the shadow
-                        // caster (lodOverride active). If they differ, the caster
-                        // renders a different terrain LOD than the receiver, which
-                        // is the floating-caster self-shadow cause.
-                        if (typeof window !== 'undefined' && window.SHADOW_LOD_DEBUG) {
-                            var _eff = needToLoadChild ? this.children.length - 1 : lastChildTraversed;
-                            var _fn = visitor.getFrameStamp
-                                ? visitor.getFrameStamp().getFrameNumber()
-                                : 0;
-                            if (!window.__lodStats || window.__lodStats.frame !== _fn) {
-                                if (window.__lodStats) {
-                                    // eslint-disable-next-line no-console
-                                    console.log(
-                                        '[lod] frame=' + window.__lodStats.frame +
-                                            ' match=' + window.__lodStats.match +
-                                            ' mismatch=' + window.__lodStats.mismatch +
-                                            (window.__lodStats.examples.length
-                                                ? ' e.g. main/shadow=' +
-                                                  window.__lodStats.examples.join(',')
-                                                : '')
-                                    );
-                                }
-                                window.__lodStats = {
-                                    frame: _fn,
-                                    match: 0,
-                                    mismatch: 0,
-                                    examples: []
-                                };
-                            }
-                            if (lodOverride) {
-                                this.__shadowLOD = _eff;
-                                this.__shadowLODFrame = _fn;
-                            } else {
-                                this.__mainLOD = _eff;
-                                this.__mainLODFrame = _fn;
-                            }
-                            if (
-                                this.__shadowLOD !== undefined &&
-                                this.__mainLOD !== undefined &&
-                                this.__shadowLODFrame === _fn &&
-                                this.__mainLODFrame === _fn
-                            ) {
-                                if (this.__shadowLOD === this.__mainLOD) {
-                                    window.__lodStats.match++;
-                                } else {
-                                    window.__lodStats.mismatch++;
-                                    if (window.__lodStats.examples.length < 5) {
-                                        window.__lodStats.examples.push(
-                                            this.__mainLOD + '/' + this.__shadowLOD
-                                        );
-                                    }
-                                }
-                            }
-                        }
-
                         break;
                     default:
                         break;

@@ -166,15 +166,10 @@ utils.createPrototypeNode(
                     st,
                     lt = this._shadowTechniques.length;
 
-                var perf = typeof window !== 'undefined' && window.SHADOW_PERF;
-                var tStart = perf ? performance.now() : 0;
-
                 // cull Shadowed Scene
                 if (lt) nv.pushStateSet(this._receivingStateset);
                 this.nodeTraverse(nv);
                 if (lt) nv.popStateSet();
-
-                var tMainCull = perf ? performance.now() : 0;
 
                 var isDirty = false;
                 for (i = 0; i < lt; i++) {
@@ -193,7 +188,6 @@ utils.createPrototypeNode(
                 if (!isDirty) return;
 
                 var hasCastingScene = this.computeShadowedSceneBounds(nv);
-                var tBounds = perf ? performance.now() : 0;
                 if (!hasCastingScene) {
                     // no shadow but still may need to clear
                     // and makes sure shadow receiver shader
@@ -226,33 +220,9 @@ utils.createPrototypeNode(
                     // not to break things
                     this._removeNodesNeverCastingVisitor.restore();
                 }
-
-                if (perf) {
-                    this._logShadowPerf(tMainCull - tStart, tBounds - tMainCull, performance.now() - tBounds);
-                }
             } else {
                 this.nodeTraverse(nv);
             }
-        },
-
-        // CPU-only (cull) timings, averaged and logged once per second. GPU draw time is
-        // not included; compare overall frame rate with shadows on/off for that.
-        _logShadowPerf: function(mainCull, bounds, casterCull) {
-            var acc = this._perfAcc || (this._perfAcc = { n: 0, main: 0, bounds: 0, cast: 0, t0: performance.now() });
-            acc.n++;
-            acc.main += mainCull;
-            acc.bounds += bounds;
-            acc.cast += casterCull;
-            var now = performance.now();
-            if (now - acc.t0 < 1000) return;
-            // eslint-disable-next-line no-console
-            console.log(
-                '[shadowperf] fps=' + (acc.n * 1000 / (now - acc.t0)).toFixed(1) +
-                    ' mainCull=' + (acc.main / acc.n).toFixed(1) + 'ms' +
-                    ' bounds=' + (acc.bounds / acc.n).toFixed(1) + 'ms' +
-                    ' casterCull=' + (acc.cast / acc.n).toFixed(1) + 'ms'
-            );
-            this._perfAcc = undefined;
         }
     }),
     'osgShadow',
