@@ -404,6 +404,7 @@ var CompilerFragment = {
         if (numCascades > 1) {
             var defsC = shadowReceive.getDefines();
             var shadowUniformsC = shadowReceive.getOrCreateUniforms();
+            var splitComp = ['x', 'y', 'z', 'w'];
             var results = [];
             for (var c = 0; c < numCascades; c++) {
                 var inputsC = this.getInputsFromShadow(
@@ -413,6 +414,21 @@ var CompilerFragment = {
                     lightNum,
                     c
                 );
+                // Same depth bands as the blend below: cascade c is used over
+                // [0.75 * split(c-1), split(c)].
+                var skipC = this.createVariable('float');
+                var lo = c > 0 ? '%splits.' + splitComp[c - 1] + ' * 0.75' : '0.0';
+                this.getNode('InlineCode')
+                    .code(
+                        '%skip = (-%viewVertex.z < ' + lo +
+                            ' || -%viewVertex.z > %splits.' + splitComp[c] + ') ? 1.0 : 0.0;'
+                    )
+                    .inputs({
+                        viewVertex: this.getOrCreateViewVertex(),
+                        splits: this.getOrCreateUniform(shadowUniformsC.cascadeSplits)
+                    })
+                    .outputs({ skip: skipC });
+                inputsC.cascadeSkip = skipC;
                 var outC = this.createVariable('float');
                 this.getNode('ShadowReceive')
                     .inputs(inputsC)
@@ -428,7 +444,6 @@ var CompilerFragment = {
                 strength: this.getOrCreateUniform(shadowUniformsC.cascadeStrength)
             };
             var codeLines = ['float d = -%viewVertex.z;'];
-            var splitComp = ['x', 'y', 'z', 'w'];
             for (var k = 0; k < numCascades; k++) {
                 inputsSel['r' + k] = results[k];
                 codeLines.push(

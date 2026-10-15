@@ -57,6 +57,10 @@ var ShadowMapAtlas = function(settings) {
     this._cascadeSplits = new Float32Array(4);
     // Per-cascade multiplier on shadow darkness, e.g. to darken blurrier far cascades.
     this._cascadeStrengths = new Float32Array([1.0, 1.0, 1.0, 1.0]);
+    // Far cascades are re-rendered round-robin, one per frame (see cullShadowCasting).
+    this._cascadeFrame = 0;
+    this._lastLightDir = vec4.fromValues(0.0, 0.0, 0.0, 0.0);
+    this._forceAllCascades = true;
 
     this._cameraClear = new Camera();
     this._cameraClear.setName('shadowAtlasCameraClear');
@@ -193,6 +197,7 @@ utils.createPrototypeObject(
         },
 
         setMaxDistance: function(value) {
+            this._forceAllCascades = true;
             if (this._shadowSettings) this._shadowSettings.setShadowMaxDistance(value);
             for (var i = 0, l = this._shadowMaps.length; i < l; i++) {
                 this._shadowMaps[i].setMaxDistance(value);
@@ -446,11 +451,33 @@ utils.createPrototypeObject(
         cullShadowCasting: function(cullVisitor, bbox) {
             this._cameraClear.accept(cullVisitor);
 
-            for (var i = 0, l = this._shadowMaps.length; i < l; i++) {
+            // Each cascade camera clears only its own tile, so a cascade that is skipped
+            // this frame keeps last frame's map and matching receive uniforms. The near
+            // cascade updates every frame; the far ones (whose texels are large and whose
+            // coverage barely moves) take turns, cutting the shadow cull and draw cost.
+            var numMaps = this._shadowMaps.length;
+            var roundRobin = this._cascaded && numMaps > 2;
+            var farIndex = roundRobin ? 1 + (this._cascadeFrame++ % (numMaps - 1)) : -1;
+            var all = !roundRobin || this._forceAllCascades;
+            this._forceAllCascades = false;
+
+            for (var i = 0; i < numMaps; i++) {
                 var shadowMap = this._shadowMaps[i];
-                if (shadowMap.isContinuousUpdate() || shadowMap.needRedraw()) {
-                    shadowMap.cullShadowCasting(cullVisitor, bbox);
+                if (!(shadowMap.isContinuousUpdate() || shadowMap.needRedraw())) continue;
+                if (!all && i > 0 && i !== farIndex && !shadowMap.needRedraw()) continue;
+                shadowMap.cullShadowCasting(cullVisitor, bbox);
+
+                if (roundRobin && i === 0 && !all) {
+                    // The sun moved (time of day): every cascade is stale, update them all.
+                    var dir = shadowMap._worldLightPos;
+                    var last = this._lastLightDir;
+                    if (dir[0] !== last[0] || dir[1] !== last[1] || dir[2] !== last[2]) {
+                        all = true;
+                    }
                 }
+            }
+            if (this._shadowMaps.length > 0) {
+                vec4.copy(this._lastLightDir, this._shadowMaps[0]._worldLightPos);
             }
 
             // Cascaded shadow maps: publish each cascade's view-space far distance so

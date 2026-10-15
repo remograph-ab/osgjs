@@ -1,7 +1,6 @@
 import utils from 'osg/utils';
 import Lod from 'osg/Lod';
 import NodeVisitor from 'osg/NodeVisitor';
-import notify from 'osg/notify';
 import { mat4 } from 'osg/glMatrix';
 import { vec3 } from 'osg/glMatrix';
 
@@ -248,36 +247,6 @@ utils.createPrototypeNode(
                                 // (if it's not loaded by function so that we can trust the URL)
                                 dbhandler.removeRequest(this._databasePath + this._perRangeDataList[j].filename);
                                 this._perRangeDataList[j].dbrequest = undefined;
-                            }
-                        }
-                        // Optional diagnostic (window.LOD_DEBUG): a PagedLOD draws nothing
-                        // when no range matches. During a shadow-map cull the range is
-                        // computed through the LOD camera override, so a mismatch with the
-                        // main pass means the caster and the visible geometry disagree.
-                        // Report each node once.
-                        if (typeof window !== 'undefined' && window.LOD_DEBUG) {
-                            if (lodOverride) {
-                                this._lodDebugShadow = lastChildTraversed;
-                                this._lodDebugShadowRange = requiredRange;
-                            } else {
-                                this._lodDebugMain = lastChildTraversed;
-                                this._lodDebugMainRange = requiredRange;
-                            }
-                            if (
-                                !this._lodDebugReported &&
-                                this._lodDebugShadow !== undefined &&
-                                this._lodDebugMain !== undefined &&
-                                this._lodDebugShadow !== this._lodDebugMain
-                            ) {
-                                this._lodDebugReported = true;
-                                notify.warn(
-                                    '[pagedlod] mismatch node=' + this.getName() +
-                                    ' mainChild=' + this._lodDebugMain +
-                                    ' shadowChild=' + this._lodDebugShadow +
-                                    ' mainRange=' + this._lodDebugMainRange.toFixed(2) +
-                                    ' shadowRange=' + this._lodDebugShadowRange.toFixed(2) +
-                                    ' numChildren=' + this.children.length
-                                );
                             }
                         }
 

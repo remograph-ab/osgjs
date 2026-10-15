@@ -26,6 +26,12 @@
 #define OPT_INSTANCE_ARG_jitter
 #endif
 
+#ifdef _CASCADED_SHADOW
+#define OPT_ARG_cascadeSkip ,const in float cascadeSkip
+#else
+#define OPT_ARG_cascadeSkip
+#endif
+
 #pragma include "tapPCF.glsl"
 
 #pragma DECLARE_FUNCTION DERIVATIVES:enable
@@ -48,7 +54,8 @@ float shadowReceive(const in bool lighted,
                     OPT_ARG_atlasSize
                     OPT_ARG_normalBias
                     OPT_ARG_outDistance
-                    OPT_ARG_jitter) {
+                    OPT_ARG_jitter
+                    OPT_ARG_cascadeSkip) {
 
     // 0 for early out
     bool earlyOut = false;
@@ -69,6 +76,12 @@ float shadowReceive(const in bool lighted,
     if (shadowDepthRange.x == shadowDepthRange.y) {
         earlyOut = true;
     }
+#ifdef _CASCADED_SHADOW
+    // This cascade has no weight at this view depth; skip all its texture fetches.
+    if (cascadeSkip > 0.5) {
+        earlyOut = true;
+    }
+#endif
 
     vec4 shadowVertexEye;
     vec4 shadowNormalEye;

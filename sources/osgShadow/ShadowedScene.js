@@ -140,10 +140,19 @@ utils.createPrototypeNode(
                 this.accept(this._removeNodesNeverCastingVisitor);
             }
 
-            this._computeBoundsVisitor.setTraversalMask(this._castsShadowBoundsTraversalMask);
-            this._computeBoundsVisitor.reset();
-            this.accept(this._computeBoundsVisitor);
             var bbox = this._computeBoundsVisitor.getBoundingBox();
+            if (this._allTechniquesBounded()) {
+                // The cached scene bound instead of a per-frame pass over every loaded
+                // geometry: the bounded fit only uses it as a capped toward-light extent.
+                bbox.init();
+                var bs = this.getBound();
+                if (bs.valid()) bbox.expandByBoundingSphere(bs);
+            } else {
+                this._computeBoundsVisitor.setTraversalMask(this._castsShadowBoundsTraversalMask);
+                this._computeBoundsVisitor.reset();
+                this.accept(this._computeBoundsVisitor);
+                bbox = this._computeBoundsVisitor.getBoundingBox();
+            }
 
             if (!bbox.valid()) {
                 // nothing to draw Early out.
@@ -156,6 +165,16 @@ utils.createPrototypeNode(
                 return false;
             }
 
+            return true;
+        },
+
+        _allTechniquesBounded: function() {
+            var lt = this._shadowTechniques.length;
+            if (!lt) return false;
+            for (var i = 0; i < lt; i++) {
+                var st = this._shadowTechniques[i];
+                if (!st.getMaxDistance || !(st.getMaxDistance() > 0.0)) return false;
+            }
             return true;
         },
 
