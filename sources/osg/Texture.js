@@ -86,6 +86,46 @@ Texture.COMPRESSED_RGBA_PVRTC_2BPPV1_IMG = 0x8c03;
 // http://www.khronos.org/registry/webgl/extensions/WEBGL_compressed_texture_etc1/
 Texture.COMPRESSED_RGB_ETC1_WEBGL = 0x8d64;
 
+// S3TC sRGB formats, from:
+// https://registry.khronos.org/webgl/extensions/WEBGL_compressed_texture_s3tc_srgb/
+Texture.COMPRESSED_SRGB_S3TC_DXT1_EXT = 0x8c4c;
+Texture.COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT = 0x8c4d;
+Texture.COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT = 0x8c4e;
+Texture.COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT = 0x8c4f;
+
+// ETC2/EAC formats, from:
+// https://registry.khronos.org/webgl/extensions/WEBGL_compressed_texture_etc/
+Texture.COMPRESSED_R11_EAC = 0x9270;
+Texture.COMPRESSED_SIGNED_R11_EAC = 0x9271;
+Texture.COMPRESSED_RG11_EAC = 0x9272;
+Texture.COMPRESSED_SIGNED_RG11_EAC = 0x9273;
+Texture.COMPRESSED_RGB8_ETC2 = 0x9274;
+Texture.COMPRESSED_SRGB8_ETC2 = 0x9275;
+Texture.COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2 = 0x9276;
+Texture.COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2 = 0x9277;
+Texture.COMPRESSED_RGBA8_ETC2_EAC = 0x9278;
+Texture.COMPRESSED_SRGB8_ALPHA8_ETC2_EAC = 0x9279;
+
+// ASTC formats, from:
+// https://registry.khronos.org/webgl/extensions/WEBGL_compressed_texture_astc/
+// only the 4x4 block size is listed, it is the one the basis transcoder targets
+Texture.COMPRESSED_RGBA_ASTC_4x4_KHR = 0x93b0;
+Texture.COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR = 0x93d0;
+
+// BPTC (BC6H/BC7) formats, from:
+// https://registry.khronos.org/webgl/extensions/EXT_texture_compression_bptc/
+Texture.COMPRESSED_RGBA_BPTC_UNORM_EXT = 0x8e8c;
+Texture.COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT = 0x8e8d;
+Texture.COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT = 0x8e8e;
+Texture.COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT = 0x8e8f;
+
+// RGTC (BC4/BC5) formats, from:
+// https://registry.khronos.org/webgl/extensions/EXT_texture_compression_rgtc/
+Texture.COMPRESSED_RED_RGTC1_EXT = 0x8dbb;
+Texture.COMPRESSED_SIGNED_RED_RGTC1_EXT = 0x8dbc;
+Texture.COMPRESSED_RED_GREEN_RGTC2_EXT = 0x8dbd;
+Texture.COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT = 0x8dbe;
+
 // filter mode
 Texture.LINEAR = 0x2601;
 Texture.NEAREST = 0x2600;
@@ -325,6 +365,8 @@ utils.createPrototypeStateAttribute(
                 this._textureWidth = 0;
                 this._textureHeight = 0;
                 this._unrefImageDataAfterApply = false;
+                // SPOTSCALE: URL of the image released after upload, see getImageURL
+                this._unrefImageURL = undefined;
                 this._internalFormat = undefined;
                 this._dirtyMipmap = true;
                 this._textureTarget = Texture.TEXTURE_2D;
@@ -613,6 +655,13 @@ utils.createPrototypeStateAttribute(
                 this._unrefImageDataAfterApply = bool;
             },
 
+            // SPOTSCALE: Returns the URL of the image, also once it has been released after upload
+            // (see setUnrefImageDataAfterApply) and getImage no longer returns it
+            getImageURL: function() {
+                if (this._image !== undefined) return this._image.getURL();
+                return this._unrefImageURL;
+            },
+
             checkIsCompressed: function(format) {
                 var fo = format || this._internalFormat;
                 switch (fo) {
@@ -628,6 +677,30 @@ utils.createPrototypeStateAttribute(
                     case Texture.COMPRESSED_RGBA_PVRTC_4BPPV1_IMG:
                     case Texture.COMPRESSED_RGBA_PVRTC_2BPPV1_IMG:
                     case Texture.COMPRESSED_RGB_ETC1_WEBGL:
+                    case Texture.COMPRESSED_SRGB_S3TC_DXT1_EXT:
+                    case Texture.COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:
+                    case Texture.COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
+                    case Texture.COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+                    case Texture.COMPRESSED_R11_EAC:
+                    case Texture.COMPRESSED_SIGNED_R11_EAC:
+                    case Texture.COMPRESSED_RG11_EAC:
+                    case Texture.COMPRESSED_SIGNED_RG11_EAC:
+                    case Texture.COMPRESSED_RGB8_ETC2:
+                    case Texture.COMPRESSED_SRGB8_ETC2:
+                    case Texture.COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2:
+                    case Texture.COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2:
+                    case Texture.COMPRESSED_RGBA8_ETC2_EAC:
+                    case Texture.COMPRESSED_SRGB8_ALPHA8_ETC2_EAC:
+                    case Texture.COMPRESSED_RGBA_ASTC_4x4_KHR:
+                    case Texture.COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR:
+                    case Texture.COMPRESSED_RGBA_BPTC_UNORM_EXT:
+                    case Texture.COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT:
+                    case Texture.COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT:
+                    case Texture.COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT:
+                    case Texture.COMPRESSED_RED_RGTC1_EXT:
+                    case Texture.COMPRESSED_SIGNED_RED_RGTC1_EXT:
+                    case Texture.COMPRESSED_RED_GREEN_RGTC2_EXT:
+                    case Texture.COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT:
                         return true;
                     default:
                         return false;
@@ -668,6 +741,30 @@ utils.createPrototypeStateAttribute(
             },
 
             applyFilterParameter: function(gl, target) {
+                if (this._isCompressed && this.hasMipmapFilter()) {
+                    // A compressed texture cannot have its mipmaps generated by the driver, they
+                    // must all come from the file. Filtering with an incomplete chain gives an
+                    // incomplete texture, which renders black, so fall back on plain filtering.
+                    var levels = this._image ? this._image.getMipmap().length : 0;
+                    var neededLevels =
+                        1 +
+                        Math.floor(
+                            Math.log(Math.max(this._textureWidth, this._textureHeight)) / Math.LN2
+                        );
+                    if (levels < neededLevels) {
+                        notify.warn(
+                            'compressed texture ' +
+                                (this._image ? this._image.getURL() : '') +
+                                ' has ' +
+                                levels +
+                                ' of the ' +
+                                neededLevels +
+                                ' mipmap levels needed, disabling mipmap filtering'
+                        );
+                        this._minFilter = Texture.LINEAR;
+                    }
+                }
+
                 var powerOfTwo = isPowerOf2(this._textureWidth) && isPowerOf2(this._textureHeight);
                 if (!powerOfTwo) {
                     // NPOT non support in webGL explained here
@@ -687,7 +784,7 @@ utils.createPrototypeStateAttribute(
                 gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, this._minFilter);
 
                 // handle extension EXT_texture_filter_anisotropic
-                if (Texture.ANISOTROPIC_SUPPORT_EXT) {
+                if (this._maxAnisotropy > 1.0 && Texture.ANISOTROPIC_SUPPORT_EXT) {
                     var multiplier =
                         this._maxAnisotropy < Texture.ANISOTROPIC_SUPPORT_MAX
                             ? this._maxAnisotropy
@@ -735,10 +832,12 @@ utils.createPrototypeStateAttribute(
                                 imi.getImage()
                             );
                         }
-                } else {
+                } else if (!this._isCompressed) {
                     // automatic mipmap
                     gl.generateMipmap(target);
                 }
+                // a compressed texture without mipmaps in the file cannot get them generated,
+                // applyFilterParameter has already downgraded the min filter for that case
             },
 
             // return true if contains a mipmap filter
@@ -755,7 +854,9 @@ utils.createPrototypeStateAttribute(
                 var args = Array.prototype.slice.call(arguments, 1);
                 
                 // use parameters of pixel store
-                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, this._flipY);
+                // compressedTexImage2D raises INVALID_OPERATION if UNPACK_FLIP_Y_WEBGL is set,
+                // compressed blocks can only be flipped when the file is authored
+                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, this._isCompressed ? false : this._flipY);
                 gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, this._colorSpaceConversion);
 
                 if (this._isCompressed) gl.compressedTexImage2D.apply(gl, args);
@@ -874,6 +975,8 @@ utils.createPrototypeStateAttribute(
                             this.generateMipmap(gl, this._textureTarget);
 
                             if (this._unrefImageDataAfterApply) {
+                                // SPOTSCALE: Keep the URL, it identifies the texture once the image is gone
+                                this._unrefImageURL = image.getURL();
                                 this._image = undefined;
                             }
 
@@ -882,6 +985,14 @@ utils.createPrototypeStateAttribute(
                             gl.bindTexture(this._textureTarget, null);
                         }
                     } else if (this._textureHeight !== 0 && this._textureWidth !== 0) {
+                        // SPOTSCALE: A compressed texture cannot be allocated without data, which is the
+                        // case if its image was released after upload and it is made dirty again, e.g. by a
+                        // lost context. Leave it unbound rather than fail in compressedTexImage2D
+                        if (this._isCompressed) {
+                            gl.bindTexture(this._textureTarget, null);
+                            return;
+                        }
+
                         // must be called before init
                         this.computeTextureFormat();
 

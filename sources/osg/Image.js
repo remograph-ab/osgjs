@@ -4,6 +4,15 @@ import Object from 'osg/Object';
 
 var ImageBitmap = window.ImageBitmap || function() {};
 
+var isTypedArrayObject = function(object) {
+    return (
+        object instanceof Uint8Array ||
+        object instanceof Float32Array ||
+        object instanceof Uint16Array ||
+        object instanceof Uint32Array
+    );
+};
+
 var ImageObject = function(image) {
     Object.call(this);
 
@@ -63,14 +72,23 @@ utils.createPrototypeObject(
         useOrCreateImage: function(img) {
             return img instanceof ImageObject === false ? new ImageObject(img) : img;
         },
-        setImageDDS: function(ddsData) {
-            this._mipmap = ddsData.mipmaps;
-            this.setWidth(ddsData.width);
-            this.setHeight(ddsData.height);
-            this._mipmap.length = ddsData.mipmapCount;
+        // Sets the content of the image from an already decoded mipmap pyramid, as produced by
+        // Input.getDDS or by the KTX2 reader. Data is
+        //     { mipmaps: [ { data, width, height } ], width, height, format, mipmapCount }
+        // where format is the GL (internal) format the data is in: a compressed format such as
+        // Texture.COMPRESSED_RGBA_BPTC_UNORM_EXT, or Texture.RGBA for plain byte data.
+        setImageCompressed: function(data) {
+            this._mipmap = data.mipmaps;
+            this.setWidth(data.width);
+            this.setHeight(data.height);
+            this._mipmap.length = data.mipmapCount;
             this._imageObject = this._mipmap[0].data;
-            this._format = ddsData.format;
+            this._format = data.format;
             this.dirty();
+        },
+
+        setImageDDS: function(ddsData) {
+            this.setImageCompressed(ddsData);
         },
         setImage: function(img) {
             if (!this._url && img && (img.src || img.currentSrc)) {
@@ -113,13 +131,7 @@ utils.createPrototypeObject(
         },
 
         isTypedArray: function() {
-            var img = this.getImage();
-            return (
-                img instanceof Uint8Array ||
-                img instanceof Float32Array ||
-                img instanceof Uint16Array ||
-                img instanceof Uint32Array
-            );
+            return isTypedArrayObject(this.getImage());
         },
 
         setWidth: function(w) {
@@ -407,13 +419,13 @@ utils.createPrototypeObject(
                     return 0;
                 }
             }
-            if (thisImage instanceof TypedArray && !(otherImage instanceof TypedArray)) {
+            if (isTypedArrayObject(thisImage) && !isTypedArrayObject(otherImage)) {
                 return -1;
             }
-            if (!(thisImage instanceof TypedArray) && otherImage instanceof TypedArray) {
+            if (!isTypedArrayObject(thisImage) && isTypedArrayObject(otherImage)) {
                 return 1;
             }
-            if (thisImage.isTypedArray() && otherImage.isTypedArray()) {
+            if (isTypedArrayObject(thisImage) && isTypedArrayObject(otherImage)) {
                 // Sorry, no better way
                 if (thisImage.length < otherImage.length) {
                     return -1;

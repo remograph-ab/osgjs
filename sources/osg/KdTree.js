@@ -42,10 +42,6 @@ var KdNode = function(first, second) {
     this._bb = new BoundingBox();
     this._first = first;
     this._second = second;
-    // These variables represent the local clipped ray (for intersection test)
-    // They are mostly temporary because they are recomputed for each intersection test
-    this._nodeRayStart = vec3.create();
-    this._nodeRayEnd = vec3.create();
 };
 
 var InfoCollector = function() {
@@ -443,6 +439,8 @@ var KdTree = function() {
     this._vertexIndices = undefined;
     this._numVertexIndices = 0;
     this._numPrimitiveIndices = 0;
+    // SPOTSCALE: The locally clipped segment per tree depth when intersecting, see intersectLineSegment
+    this._segmentStack = [];
 };
 
 utils.createPrototypeObject(
@@ -560,27 +558,38 @@ utils.createPrototypeObject(
             }
         },
         intersectLineSegment: function(functor, node, ls, le) {
+            this._intersectLineSegment(functor, node, ls, le, 0);
+        },
+
+        // SPOTSCALE: The clipped segment used to live in two vec3 on every KdNode, about a third of
+        // the memory of a node. Only one node per depth is being intersected at a time, so a pair
+        // per depth is enough, and the depth is bounded by the maximum number of levels when building
+        _intersectLineSegment: function(functor, node, ls, le, depth) {
             if (node._first < 0) {
                 this._intersectFunctor(functor, node);
                 return;
             }
 
-            var s = node._nodeRayStart;
-            var e = node._nodeRayEnd;
+            var stack = this._segmentStack;
+            if (depth >= stack.length) stack.push([vec3.create(), vec3.create()]);
+            var s = stack[depth][0];
+            var e = stack[depth][1];
             vec3.copy(s, ls);
             vec3.copy(e, le);
             var kNodes = this._kdNodes;
             var kNode;
             if (node._first > 0) {
                 kNode = kNodes[node._first];
-                if (functor.enter(kNode._bb, s, e)) this.intersectLineSegment(functor, kNode, s, e);
+                if (functor.enter(kNode._bb, s, e))
+                    this._intersectLineSegment(functor, kNode, s, e, depth + 1);
             }
 
             if (node._second > 0) {
                 vec3.copy(s, ls);
                 vec3.copy(e, le);
                 kNode = kNodes[node._second];
-                if (functor.enter(kNode._bb, s, e)) this.intersectLineSegment(functor, kNode, s, e);
+                if (functor.enter(kNode._bb, s, e))
+                    this._intersectLineSegment(functor, kNode, s, e, depth + 1);
             }
         }
     },

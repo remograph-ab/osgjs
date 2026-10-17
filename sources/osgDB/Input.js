@@ -6,6 +6,7 @@ import Options from 'osgDB/options';
 import zlib from 'osgDB/zlib';
 import notify from 'osg/notify';
 import Image from 'osg/Image';
+import KTX2Reader from 'osgDB/KTX2Reader';
 import BufferArray from 'osg/BufferArray';
 import DrawArrays from 'osg/DrawArrays';
 import DrawArrayLengths from 'osg/DrawArrayLengths';
@@ -297,7 +298,7 @@ Input.prototype = {
                     dds.format = 0x8C93;
                 }
                 else {
-                    console.error('THREE.DDSLoader.parse: Unsupported FourCC code ', int32ToFourCC(fourCC));
+                    console.error('DDS loader: Unsupported FourCC code ', int32ToFourCC(fourCC));
                     return dds;
                 }
         }
@@ -318,7 +319,7 @@ Input.prototype = {
                 !( caps2 & DDSCAPS2_CUBEMAP_NEGATIVEZ )
             )) {
 
-            console.error('THREE.DDSLoader.parse: Incomplete cubemap faces');
+            console.error('DDS loader: Incomplete cubemap faces');
             return dds;
         }
 
@@ -398,7 +399,7 @@ Input.prototype = {
             ddsXhr.responseType = "arraybuffer";
             ddsXhr.onload = function () {
                 var ddsData = this.getDDS(ddsXhr.response, true);
-                image.setURL = url;
+                image.setURL(url);
                 image.setImageDDS(ddsData);
                 defer.resolve(image);
             }.bind(this);
@@ -407,7 +408,32 @@ Input.prototype = {
             return defer.promise;
         }
 
+        if (url.indexOf('.ktx2') !== -1) {
+            return this.readImageURLKTX2(url);
+        }
+
         return this.fetchImage(image, url, options);
+    },
+
+    // Fetches a .ktx2 file and turns it into an osg.Image, transcoding its Basis Universal
+    // payload to a format the context supports, see osgDB/KTX2Reader.
+    readImageURLKTX2: function(url) {
+        return new P(function(resolve, reject) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.responseType = 'arraybuffer';
+            xhr.onload = function() {
+                if (xhr.status !== 200 && xhr.status !== 0) {
+                    reject(new Error('failed loading ' + url + ' (status ' + xhr.status + ')'));
+                    return;
+                }
+                KTX2Reader.readImage(xhr.response, url).then(resolve, reject);
+            };
+            xhr.onerror = function() {
+                reject(new Error('failed loading ' + url));
+            };
+            xhr.send(null);
+        });
     },
 
     readNodeURL: function(url, opt) {

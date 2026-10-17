@@ -10,6 +10,7 @@ import fileHelper from 'osgDB/fileHelper';
 import requestFile, { setRequestTransform } from 'osgDB/requestFile';
 import zlib from 'osgDB/zlib';
 import BinaryDecoder from 'osgDB/BinaryDecoder';
+import KTX2Reader from 'osgDB/KTX2Reader';
 
 var osgDB = {};
 osgDB.Input = Input;
@@ -23,6 +24,11 @@ osgDB.fileHelper = fileHelper;
 osgDB.requestFile = requestFile;
 osgDB.setRequestTransform = setRequestTransform;
 osgDB.BinaryDecoder = BinaryDecoder;
+osgDB.KTX2Reader = KTX2Reader;
+// reads a .ktx2 ArrayBuffer into an osg.Image, for callers that fetched the file themselves
+osgDB.readImageKTX2 = KTX2Reader.readImage;
+// instantiates the basis transcoder ahead of the first .ktx2 texture, optional
+osgDB.initKTX2 = KTX2Reader.init;
 
 utils.objectMix(osgDB, zlib);
 
