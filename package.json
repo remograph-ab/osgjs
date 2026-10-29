@@ -7,7 +7,6 @@
     "eslint-plugin-import": "^2.6.0",
     "eslint-plugin-node": "^5.1.0",
     "eslint-plugin-prettier": "^2.6.0",
-    "eslint-plugin-private-variables": "*",
     "eslint-plugin-promise": "^3.5.0",
     "eslint-plugin-standard": "^3.0.1",
     "grunt-contrib-connect": "~0.9",
