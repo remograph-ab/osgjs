@@ -27,14 +27,22 @@ utils.createPrototypeStateAttribute(
             return this._shadowReceiveAttribute.getDefines();
         },
         _computeInternalHash: function() {
-            return 'ShadowCast' + this._enable + this._shadowReceiveAttribute.getPrecision();
+            var receive = this._shadowReceiveAttribute;
+            this._hashPrecision = receive.getPrecision();
+            this._hashKernelSizePCF = receive.getKernelSizePCF();
+            // the PCF kernel selects the alpha mask dither pattern (see ShadowCastCompiler)
+            return 'ShadowCast' + this._enable + this._hashPrecision + this._hashKernelSizePCF;
         },
         getHash: function() {
-            var receiveAttributeDirty = false;
-            if (this._shadowReceiveAttribute && this._shadowReceiveAttribute._dirtyHash)
-                this._receiveAttributeDirty = true;
+            var receive = this._shadowReceiveAttribute;
+            if (
+                receive &&
+                (receive.getPrecision() !== this._hashPrecision ||
+                    receive.getKernelSizePCF() !== this._hashKernelSizePCF)
+            )
+                this._dirtyHash = true;
 
-            if (!this._dirtyHash && !receiveAttributeDirty) return this._hash;
+            if (!this._dirtyHash) return this._hash;
 
             this._hash = this._computeInternalHash();
             this._dirtyHash = false;

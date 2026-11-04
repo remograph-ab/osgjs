@@ -1,5 +1,6 @@
 import P from 'bluebird';
 import utils from 'osg/utils';
+import Sequence from 'osg/Sequence';
 import TransformEnums from 'osg/transformEnums';
 
 var rejectObject = utils.rejectObject;
@@ -365,6 +366,113 @@ osgWrapper.Lod = function(input, lod) {
         }
         return lod;
     });
+};
+
+var isNumber = function(value) {
+    return typeof value === 'number' && isFinite(value);
+};
+
+osgWrapper.Sequence = function(input, sequence) {
+    var jsonObj = input.getJSON();
+    var timeList = jsonObj.TimeList || [];
+    var numberFields = [
+        'Begin',
+        'End',
+        'Speed',
+        'NumRepeats',
+        'DefaultTime',
+        'LastFrameTime',
+        'Value'
+    ];
+    var invalid =
+        !Array.isArray(timeList) ||
+        timeList.some(function(time) {
+            return !isNumber(time) || time < 0;
+        }) ||
+        numberFields.some(function(field) {
+            return jsonObj[field] !== undefined && !isNumber(jsonObj[field]);
+        });
+    if (invalid) return rejectObject('Sequence', jsonObj);
+
+    var valueOr = function(value, defaultValue) {
+        return value === undefined ? defaultValue : value;
+    };
+
+    // Frame times must be set before osgWrapper.Node adds the children,
+    // otherwise each child would get the default time.
+    sequence.setTimeList(timeList);
+    sequence.setDefaultTime(valueOr(jsonObj.DefaultTime, 1));
+    sequence.setInterval(
+        jsonObj.LoopMode === 'SWING' ? Sequence.SWING : Sequence.LOOP,
+        valueOr(jsonObj.Begin, 0),
+        valueOr(jsonObj.End, -1)
+    );
+    sequence.setDuration(valueOr(jsonObj.Speed, 0), valueOr(jsonObj.NumRepeats, -1));
+    sequence.setLastFrameTime(valueOr(jsonObj.LastFrameTime, 0));
+    sequence.setSync(jsonObj.Sync === true);
+    sequence.setClearOnStop(jsonObj.ClearOnStop === true);
+
+    var mode = jsonObj.Mode;
+    if (mode === 'START' || mode === 'RESUME') {
+        sequence.setMode(Sequence.START);
+    } else if (mode === 'PAUSE') {
+        sequence.setMode(Sequence.START);
+        sequence.setValue(valueOr(jsonObj.Value, -1));
+        sequence.setMode(Sequence.PAUSE);
+    } else {
+        sequence.setMode(Sequence.STOP);
+        sequence.setValue(valueOr(jsonObj.Value, -1));
+    }
+
+    return osgWrapper.Node(input, sequence);
+};
+
+osgWrapper.Switch = function(input, sw) {
+    var jsonObj = input.getJSON();
+    var valueList = jsonObj.ValueList;
+    if (valueList !== undefined && !Array.isArray(valueList)) return rejectObject('Switch', jsonObj);
+
+    return osgWrapper.Node(input, sw).then(function() {
+        // Children were added enabled by default. Like osg::Switch, children not covered by
+        // the value list are disabled.
+        if (valueList) {
+            for (var i = 0, l = sw.getChildren().length; i < l; i++) {
+                sw.setValue(i, i < valueList.length && valueList[i] === true);
+            }
+        }
+        return sw;
+    });
+};
+
+osgWrapper.MultiSwitch = function(input, multiSwitch) {
+    var jsonObj = input.getJSON();
+    var switchSets = jsonObj.SwitchSetList || [];
+    var names = jsonObj.SwitchSetNameList || [];
+    var invalid =
+        !Array.isArray(switchSets) ||
+        !Array.isArray(names) ||
+        switchSets.some(function(values) {
+            return !Array.isArray(values);
+        }) ||
+        (jsonObj.ActiveSwitchSet !== undefined && !isNumber(jsonObj.ActiveSwitchSet));
+    if (invalid) return rejectObject('MultiSwitch', jsonObj);
+
+    multiSwitch.setNewChildDefaultValue(jsonObj.NewChildDefaultValue !== false);
+    multiSwitch.setActiveSwitchSet(jsonObj.ActiveSwitchSet || 0);
+    // Values are set before osgWrapper.Node adds the children, which keeps them as is
+    for (var i = 0; i < switchSets.length; i++) {
+        multiSwitch.setValueList(
+            i,
+            switchSets[i].map(function(value) {
+                return value === true;
+            })
+        );
+    }
+    for (var j = 0; j < names.length && j < switchSets.length; j++) {
+        if (typeof names[j] === 'string') multiSwitch.setValueName(j, names[j]);
+    }
+
+    return osgWrapper.Node(input, multiSwitch);
 };
 
 osgWrapper.PagedLOD = function(input, plod) {

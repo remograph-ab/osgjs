@@ -17,6 +17,8 @@ import RenderStage from 'osg/RenderStage';
 import Node from 'osg/Node';
 import Lod from 'osg/Lod';
 import Switch from 'osg/Switch';
+import Sequence from 'osg/Sequence';
+import MultiSwitch from 'osg/MultiSwitch';
 import PagedLOD from 'osg/PagedLOD';
 import Camera from 'osg/Camera';
 import TransformEnums from 'osg/transformEnums';
@@ -699,6 +701,8 @@ var geometryApply = function(node) {
 
 cullVisitorHelper.registerApplyFunction(Node.nodeTypeID, nodeApply);
 cullVisitorHelper.registerApplyFunction(Switch.nodeTypeID, nodeApply);
+cullVisitorHelper.registerApplyFunction(Sequence.nodeTypeID, nodeApply);
+cullVisitorHelper.registerApplyFunction(MultiSwitch.nodeTypeID, nodeApply);
 cullVisitorHelper.registerApplyFunction(PagedLOD.nodeTypeID, nodeApply);
 cullVisitorHelper.registerApplyFunction(Camera.nodeTypeID, cameraApply);
 cullVisitorHelper.registerApplyFunction(MatrixTransform.nodeTypeID, matrixTransformApply);

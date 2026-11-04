@@ -1557,6 +1557,66 @@ export default function() {
             });
     });
 
+    test('Switch', function(done) {
+        var child = function(name) {
+            return { 'osg.Node': { Name: name, Children: [] } };
+        };
+        var tree = {
+            'osg.Switch': {
+                UniqueID: 1,
+                Name: 'SWITCH',
+                NewChildDefaultValue: true,
+                ValueList: [false, true],
+                Children: [child('a'), child('b'), child('c')]
+            }
+        };
+        new Input()
+            .setJSON(tree)
+            .readObject()
+            .then(function(result) {
+                assert.isOk(result.getName() === 'SWITCH', 'check name');
+                assert.isOk(result.getChildren().length === 3, 'check children number');
+                assert.isOk(result.getChildren()[1].getName() === 'b', 'check children order');
+                assert.isOk(result.getValue(0) === false, 'check value 0');
+                assert.isOk(result.getValue(1) === true, 'check value 1');
+                assert.isOk(result.getValue(2) === false, 'check value not in list is off');
+                done();
+            })
+            .catch(done);
+    });
+
+    test('MultiSwitch', function(done) {
+        var child = function(name) {
+            return { 'osg.Node': { Name: name, Children: [] } };
+        };
+        var tree = {
+            'osg.MultiSwitch': {
+                UniqueID: 1,
+                Name: 'MULTISWITCH',
+                NewChildDefaultValue: false,
+                ActiveSwitchSet: 1,
+                SwitchSetList: [[true, true, false], [false, true, true]],
+                SwitchSetNameList: ['day', 'night'],
+                Children: [child('a'), child('b'), child('c')]
+            }
+        };
+        new Input()
+            .setJSON(tree)
+            .readObject()
+            .then(function(result) {
+                assert.isOk(result.getName() === 'MULTISWITCH', 'check name');
+                assert.isOk(result.getChildren().length === 3, 'check children number');
+                assert.isOk(result.getChildren()[2].getName() === 'c', 'check children order');
+                assert.isOk(result.getNewChildDefaultValue() === false, 'check default value');
+                assert.isOk(result.getActiveSwitchSet() === 1, 'check active switch set');
+                assert.deepEqual(result.getValueList(0), [true, true, false], 'check set 0');
+                assert.deepEqual(result.getValueList(1), [false, true, true], 'check set 1');
+                assert.isOk(result.getValueName(1) === 'night', 'check switch set name');
+                done();
+            })
+            .catch(done);
+    });
+
     test('Node Children Ordering', function(done) {
         var tree = {
             'osg.Node': {
