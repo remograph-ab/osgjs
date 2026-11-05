@@ -15,6 +15,7 @@ import RenderLeaf from 'osg/RenderLeaf';
 import RenderBin from 'osg/RenderBin';
 import RenderStage from 'osg/RenderStage';
 import Node from 'osg/Node';
+import LightPointNode from 'osg/LightPointNode';
 import Lod from 'osg/Lod';
 import Switch from 'osg/Switch';
 import Sequence from 'osg/Sequence';
@@ -700,6 +701,7 @@ var geometryApply = function(node) {
 };
 
 cullVisitorHelper.registerApplyFunction(Node.nodeTypeID, nodeApply);
+cullVisitorHelper.registerApplyFunction(LightPointNode.nodeTypeID, nodeApply);
 cullVisitorHelper.registerApplyFunction(Switch.nodeTypeID, nodeApply);
 cullVisitorHelper.registerApplyFunction(Sequence.nodeTypeID, nodeApply);
 cullVisitorHelper.registerApplyFunction(MultiSwitch.nodeTypeID, nodeApply);

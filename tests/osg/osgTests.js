@@ -13,6 +13,7 @@ import Depth from 'tests/osg/Depth';
 import FrameBufferObject from 'tests/osg/FrameBufferObject';
 import KdTree from 'tests/osg/KdTree';
 import Light from 'tests/osg/Light';
+import LightPoint from 'tests/osg/LightPoint';
 import Matrix from 'tests/osg/Matrix';
 import MatrixTransform from 'tests/osg/MatrixTransform';
 import MultiSwitch from 'tests/osg/MultiSwitch';
@@ -51,6 +52,7 @@ export default function() {
     FrameBufferObject();
     KdTree();
     Light();
+    LightPoint();
     Matrix();
     MatrixTransform();
     MultiSwitch();

@@ -1,6 +1,8 @@
 import P from 'bluebird';
 import utils from 'osg/utils';
 import Sequence from 'osg/Sequence';
+import LightPoint from 'osg/LightPoint';
+import lightPointUtils from 'osg/lightPointUtils';
 import TransformEnums from 'osg/transformEnums';
 
 var rejectObject = utils.rejectObject;
@@ -370,6 +372,81 @@ osgWrapper.Lod = function(input, lod) {
 
 var isNumber = function(value) {
     return typeof value === 'number' && isFinite(value);
+};
+
+var lightPointDataKinds = new WeakMap();
+var readLightPointData = function(input, json, kind) {
+    if (!json || typeof json !== 'object' || Array.isArray(json))
+        throw new TypeError('Invalid light-point ' + kind);
+    var id = json.UniqueID;
+    var map = input.getIdentifierMap();
+    if (id !== undefined) {
+        if (!Number.isInteger(id) || id < 0)
+            throw new RangeError('Invalid light-point UniqueID');
+        if (map[id] !== undefined) {
+            if (lightPointDataKinds.get(map[id]) !== kind)
+                throw new TypeError('Light-point UniqueID has an incompatible type');
+            return map[id];
+        }
+        if (Object.keys(json).length === 1)
+            throw new RangeError('Unresolved light-point ' + kind + ' reference ' + id);
+    }
+    var value = lightPointUtils[kind](json);
+    lightPointDataKinds.set(value, kind);
+    if (id !== undefined) map[id] = value;
+    if (kind === 'blinkSequence' && json.SequenceGroup !== undefined)
+        value.SequenceGroup = readLightPointData(input, json.SequenceGroup, 'sequenceGroup');
+    return value;
+};
+
+var readLightPoint = function(input, json, point) {
+    if (!json || typeof json !== 'object' || Array.isArray(json))
+        throw new TypeError('Invalid LightPoint record');
+    if (json.On !== undefined) point.setOn(json.On);
+    if (json.Position !== undefined) point.setPosition(json.Position);
+    if (json.Color !== undefined) point.setColor(json.Color);
+    if (json.Intensity !== undefined) point.setIntensity(json.Intensity);
+    if (json.Radius !== undefined) point.setRadius(json.Radius);
+    if (json.BlendingMode !== undefined) {
+        if (json.BlendingMode !== 'ADDITIVE' && json.BlendingMode !== 'BLENDED')
+            throw new RangeError('Invalid LightPoint blending mode');
+        point.setBlendingMode(LightPoint[json.BlendingMode]);
+    }
+    if (json.Sector !== undefined) point.setSector(json.Sector);
+    if (json.BlinkSequence !== undefined)
+        point._blinkSequence = readLightPointData(input, json.BlinkSequence, 'blinkSequence');
+    return point;
+};
+
+osgWrapper.LightPoint = function(input, point) {
+    var json = input.getJSON();
+    return P.try(function() {
+        osgWrapper.Object(input, point);
+        return readLightPoint(input, json, point);
+    });
+};
+
+osgWrapper.LightPointNode = function(input, node) {
+    var json = input.getJSON();
+    return P.try(function() {
+        if (json.LightPoints !== undefined && !Array.isArray(json.LightPoints))
+            throw new TypeError('Invalid LightPointNode LightPoints array');
+        if (json.MaxPixelSize !== undefined) node.setMaxPixelSize(json.MaxPixelSize);
+        if (json.MinPixelSize !== undefined) node.setMinPixelSize(json.MinPixelSize);
+        if (json.MaxVisibleDistance2 !== undefined)
+            node.setMaxVisibleDistance2(json.MaxVisibleDistance2);
+        if (json.PointSprite !== undefined) node.setPointSprite(json.PointSprite);
+        if (json.LightPointSystem !== undefined)
+            node._lightPointSystem = readLightPointData(
+                input,
+                json.LightPointSystem,
+                'system'
+            );
+        var points = json.LightPoints || [];
+        for (var i = 0; i < points.length; i++)
+            node.addLightPoint(readLightPoint(input, points[i], new LightPoint()));
+        return osgWrapper.Node(input.setJSON(json), node);
+    });
 };
 
 osgWrapper.Sequence = function(input, sequence) {

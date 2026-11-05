@@ -195,6 +195,17 @@ utils.createPrototypeObject(
             this._stateCache.viewport(x, y, width, height);
         },
 
+        getViewportSize: function(result) {
+            var viewport = this._stateCache._stateViewport.buffer;
+            result[0] = viewport.width;
+            result[1] = viewport.height;
+            return result;
+        },
+
+        getModelViewMatrix: function() {
+            return this._modelViewMatrix.getInternalArray();
+        },
+
         depthMask: function(value) {
             this._stateCache.depthMask(value);
         },

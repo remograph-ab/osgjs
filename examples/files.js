@@ -11,6 +11,7 @@ var files = {
         'gizmo',
         'instanced-arrays',
         'lights',
+        'lightpoints',
         'materials',
         'morph',
         'multipleviewers',

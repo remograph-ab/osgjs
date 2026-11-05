@@ -95,6 +95,10 @@ Input.prototype = {
         return this._json;
     },
 
+    getIdentifierMap: function() {
+        return this._identifierMap;
+    },
+
     setJSON: function(json) {
         this._json = json;
         return this;
