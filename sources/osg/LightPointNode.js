@@ -5,6 +5,7 @@ import LightPoint from 'osg/LightPoint';
 import lightPointUtils from 'osg/lightPointUtils';
 import Geometry from 'osg/Geometry';
 import BoundingBox from 'osg/BoundingBox';
+import ComputeBoundsVisitor from 'osg/ComputeBoundsVisitor';
 import BufferArray from 'osg/BufferArray';
 import DrawElements from 'osg/DrawElements';
 import BlendFunc from 'osg/BlendFunc';
@@ -334,19 +335,28 @@ utils.createPrototypeNode(
         },
         traverse: function(visitor) {
             this._rebuild();
-            if (visitor.getVisitorType() === NodeVisitor.CULL_VISITOR && visitor.getFrameStamp()) {
-                var time = visitor.getFrameStamp().getSimulationTime();
-                if (time !== this._lastSimulationTime) {
-                    this._simulationInterval =
-                        this._lastSimulationTime === undefined
-                            ? 0
-                            : Math.max(0, time - this._lastSimulationTime);
-                    this._lastSimulationTime = this._simulationTime = time;
+            if (visitor.getVisitorType() === NodeVisitor.CULL_VISITOR) {
+                if (visitor.getFrameStamp()) {
+                    var time = visitor.getFrameStamp().getSimulationTime();
+                    if (time !== this._lastSimulationTime) {
+                        this._simulationInterval =
+                            this._lastSimulationTime === undefined
+                                ? 0
+                                : Math.max(0, time - this._lastSimulationTime);
+                        this._lastSimulationTime = this._simulationTime = time;
+                    }
                 }
-            }
-            for (var i = 0; i < this._batches.length; i++) {
-                this._batches[i].accept(visitor);
-                this._batches[i]._lightPointDepthPass.accept(visitor);
+                // The batches are internal drawables with dynamic buffers rewritten
+                // every draw. Only culling may see them: applications' geometry
+                // visitors (e.g. ones freeing CPU copies of uploaded attributes or
+                // deferring uploads) would freeze their colors and sizes.
+                for (var i = 0; i < this._batches.length; i++) {
+                    this._batches[i].accept(visitor);
+                    this._batches[i]._lightPointDepthPass.accept(visitor);
+                }
+            } else if (visitor instanceof ComputeBoundsVisitor) {
+                for (var b = 0; b < this._batches.length; b++)
+                    visitor.applyBoundingBox(this._batches[b].getBoundingBox());
             }
             Node.prototype.traverse.call(this, visitor);
         },

@@ -5,6 +5,7 @@ import WebGLCaps from 'osg/WebGLCaps';
 import LightPoint from 'osg/LightPoint';
 import LightPointNode from 'osg/LightPointNode';
 import NodeVisitor from 'osg/NodeVisitor';
+import Node from 'osg/Node';
 import State from 'osg/State';
 import Geometry from 'osg/Geometry';
 import ShaderGeneratorProxy from 'osgShader/ShaderGeneratorProxy';
@@ -249,8 +250,44 @@ export default function() {
         visitor.apply = function(child) {
             visited.push(child);
         };
+        visitor.visitorType = NodeVisitor.CULL_VISITOR;
         node.traverse(visitor);
         assert.deepEqual(visited, [color, depth]);
+    });
+
+    test('LightPointNode hides its dynamic batches from non-cull visitors', function() {
+        WebGLCaps.instance(mockup.createCanvas(true).getContext());
+        var node = new LightPointNode();
+        var point = new LightPoint([0, 0, 0]);
+        point.setSector({
+            Type: 'DirectionalSector',
+            Direction: [0, 1, 0],
+            HorizLobeAngle: Math.PI,
+            VertLobeAngle: Math.PI
+        });
+        node.addLightPoint(point);
+        var child = new Node();
+        node.addChild(child);
+        var visited = [];
+        // Like an application visitor that frees uploaded vertex colors.
+        var visitor = new NodeVisitor(NodeVisitor.TRAVERSE_ALL_CHILDREN);
+        visitor.apply = function(visitedNode) {
+            visited.push(visitedNode);
+            if (visitedNode instanceof Geometry)
+                visitedNode.getVertexAttributeList().Color.compile = function() {};
+        };
+        node.traverse(visitor);
+        assert.deepEqual(visited, [child], 'regular children are still traversed');
+        var parent = new Node();
+        parent.addChild(node);
+        assert.deepEqual(Array.from(parent.getBoundingBox().getMax()), [2, 2, 2]);
+        var batch = node._batches[0];
+        assert.isFalse(
+            Object.prototype.hasOwnProperty.call(batch.getVertexAttributeList().Color, 'compile')
+        );
+        // Behind the 180-degree lobe the light is off, in front it is on.
+        assert.equal(node.evaluateLightPoint(point, [0, -1, 0], [])[3], 0);
+        assert.equal(node.evaluateLightPoint(point, [0, 1, 0], [])[3], 1);
     });
 
     test('LightPointNode supports WebGL 1 index limits', function() {
