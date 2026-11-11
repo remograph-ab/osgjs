@@ -12,6 +12,8 @@ import ShaderGeneratorProxy from 'osgShader/ShaderGeneratorProxy';
 import { mat4 } from 'osg/glMatrix';
 import Input from 'osgDB/Input';
 import lightPointUtils from 'osg/lightPointUtils';
+import vertexShader from 'osg/shaders/lightPoint.vert';
+import fragmentShader from 'osg/shaders/lightPoint.frag';
 
 export default function() {
     test('LightPoint defaults and validation', function() {
@@ -168,13 +170,16 @@ export default function() {
         });
     });
 
-    test('LightPoint systems replace intensity and control animation', function() {
+    test('LightPoint systems scale intensity and control animation', function() {
         var node = new LightPointNode();
         var point = new LightPoint();
         point.setIntensity(100);
         point.setBlinkSequence({ Pulses: [{ Duration: 1, Color: [0, 0, 0, 0] }] });
         node.setLightPointSystem({ Intensity: 0.5, AnimationState: 'ANIMATION_OFF' });
-        assert.equal(node.getLightPointIntensity(point, [0, 0, 1]), 0.5);
+        assert.equal(node.getLightPointIntensity(point, [0, 0, 1]), 50);
+        node.getLightPointSystem().Intensity = 0;
+        assert.equal(node.getLightPointIntensity(point, [0, 0, 1]), 0);
+        node.getLightPointSystem().Intensity = 0.5;
         assert.deepEqual(node.evaluateLightPoint(point, [0, 0, 1], []), [1, 1, 1, 1]);
         node.getLightPointSystem().AnimationState = 'ANIMATION_ON';
         assert.equal(node.evaluateLightPoint(point, [0, 0, 1], [])[3], 0);
@@ -290,6 +295,77 @@ export default function() {
         assert.equal(node.evaluateLightPoint(point, [0, 1, 0], [])[3], 1);
     });
 
+    test('LightPoint shaders share no uniforms, avoiding precision link errors', function() {
+        var uniforms = function(source) {
+            var names = [];
+            source.replace(/uniform\s+(?:\w+\s+)?\w+\s+(\w+)\s*;/g, function(match, name) {
+                names.push(name);
+            });
+            return names;
+        };
+        var vertexUniforms = uniforms(vertexShader);
+        assert.include(vertexUniforms, 'uLightPointGlow');
+        assert.include(vertexUniforms, 'uLightPointStar');
+        // Vertex uniforms default to highp, fragment ones are mediump here.
+        uniforms(fragmentShader).forEach(function(name) {
+            assert.notInclude(vertexUniforms, name);
+        });
+    });
+
+    test('LightPointNode glow is global and shared by both passes', function() {
+        WebGLCaps.instance(mockup.createCanvas(true).getContext());
+        var original = LightPointNode.getGlow();
+        assert.isAtLeast(original[0], 1);
+        assert.isAbove(original[1], 0);
+        assert.throws(function() {
+            LightPointNode.setGlow(0.5, 0.5);
+        }, RangeError);
+        assert.throws(function() {
+            LightPointNode.setGlow(2, -1);
+        }, RangeError);
+        var node = new LightPointNode();
+        node.addLightPoint(new LightPoint([0, 0, 0]));
+        node.getBound();
+        var color = node._batches[0];
+        var uniform = color.getStateSet().getUniform('uLightPointGlow');
+        assert.strictEqual(
+            color._lightPointDepthPass.getStateSet().getUniform('uLightPointGlow'),
+            uniform
+        );
+        LightPointNode.setGlow(4, 0);
+        assert.deepEqual(LightPointNode.getGlow(), [4, 0]);
+        LightPointNode.setGlow(original[0], original[1]);
+        assert.deepEqual(LightPointNode.getGlow(), original);
+    });
+
+    test('LightPointNode star is global and only for blinking lights', function() {
+        WebGLCaps.instance(mockup.createCanvas(true).getContext());
+        var original = LightPointNode.getStar();
+        assert.isAbove(original, 0);
+        assert.throws(function() {
+            LightPointNode.setStar(-1);
+        }, RangeError);
+        LightPointNode.setStar(0);
+        assert.equal(LightPointNode.getStar(), 0);
+        LightPointNode.setStar(original);
+        var node = new LightPointNode();
+        var point = new LightPoint();
+        node.addLightPoint(point);
+        node.getBound();
+        var color = node._batches[0];
+        assert.strictEqual(
+            color._lightPointDepthPass.getStateSet().getUniform('uLightPointStar'),
+            color.getStateSet().getUniform('uLightPointStar')
+        );
+        assert.isFalse(node.isLightPointAnimated(point));
+        point.setBlinkSequence({ Pulses: [] });
+        assert.isFalse(node.isLightPointAnimated(point), 'no pulses, no blinking');
+        point.setBlinkSequence({ Pulses: [{ Duration: 1, Color: [1, 1, 1, 1] }] });
+        assert.isTrue(node.isLightPointAnimated(point));
+        node.setLightPointSystem({ AnimationState: 'ANIMATION_OFF' });
+        assert.isFalse(node.isLightPointAnimated(point), 'system animation off');
+    });
+
     test('LightPointNode supports WebGL 1 index limits', function() {
         var node = new LightPointNode();
         var points = [];
@@ -320,6 +396,8 @@ export default function() {
         var node = new LightPointNode();
         var a = new LightPoint([0, 0, -2], [1, 0, 0, 1]);
         var b = new LightPoint([0, 0, -8], [0, 1, 0, 1]);
+        b.setIntensity(20);
+        b.setBlinkSequence({ Pulses: [{ Duration: 1, Color: [1, 1, 1, 1] }] });
         node.setLightPointList([a, b]);
         node.getBound();
         var batch = node._batches[0];
@@ -370,6 +448,16 @@ export default function() {
             batch.drawImplementation(state);
             assert.deepEqual(sent.viewport, [320, 180]);
             assert.deepEqual(sent.size, [0, 30]);
+            assert.deepEqual(
+                Array.from(batch.getVertexAttributeList().Intensity.getElements()),
+                [1, 1, 1, 1, 20, 20, 20, 20],
+                'intensity per vertex drives the glow'
+            );
+            assert.deepEqual(
+                Array.from(batch.getVertexAttributeList().Animated.getElements()),
+                [0, 0, 0, 0, 1, 1, 1, 1],
+                'only blinking lights get a star'
+            );
             var indices = batch
                 .getPrimitiveSetList()[0]
                 .getIndices()
@@ -384,7 +472,7 @@ export default function() {
                 0,
                 'off point invisible'
             );
-            assert.equal(uploads, 4, 'dynamic attributes upload even with an unchanged VAO');
+            assert.equal(uploads, 8, 'dynamic attributes upload even with an unchanged VAO');
         } finally {
             Geometry.prototype.drawImplementation = draw;
         }

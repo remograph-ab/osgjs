@@ -31,6 +31,11 @@ var batchSize = 16383;
 // behind a light cannot paint over it.
 var colorBin = 9.5;
 var depthBin = 9.75;
+// Glow around every light point: radius relative to the light's clamped
+// radius in pixels, and intensity at its center (0 disables it).
+var glow = [2, 0.7];
+// Intensity of the star rays of animated light points (0 disables them).
+var star = 0.3;
 
 var nonnegative = function(value, name) {
     if (!Number.isFinite(value) || value < 0)
@@ -44,6 +49,8 @@ var createBatch = function(owner, points, additive) {
     var vertices = new Float32Array(count * 12);
     var cornerArray = new Float32Array(count * 8);
     var radii = new Float32Array(count * 4);
+    var intensities = new Float32Array(count * 4);
+    var animated = new Float32Array(count * 4);
     var colors = new Float32Array(count * 16);
     var indices = new Uint16Array(count * 6);
     var order = [];
@@ -67,6 +74,10 @@ var createBatch = function(owner, points, additive) {
     attributes.Corner = new BufferArray(BufferArray.ARRAY_BUFFER, cornerArray, 2);
     attributes.Radius = new BufferArray(BufferArray.ARRAY_BUFFER, radii, 1);
     attributes.Radius.setUsage(BufferArray.DYNAMIC_DRAW);
+    attributes.Intensity = new BufferArray(BufferArray.ARRAY_BUFFER, intensities, 1);
+    attributes.Intensity.setUsage(BufferArray.DYNAMIC_DRAW);
+    attributes.Animated = new BufferArray(BufferArray.ARRAY_BUFFER, animated, 1);
+    attributes.Animated.setUsage(BufferArray.DYNAMIC_DRAW);
     attributes.Color = new BufferArray(BufferArray.ARRAY_BUFFER, colors, 4);
     attributes.Color.setUsage(BufferArray.DYNAMIC_DRAW);
     var indexBuffer = new BufferArray(BufferArray.ELEMENT_ARRAY_BUFFER, indices, 1);
@@ -91,9 +102,13 @@ var createBatch = function(owner, points, additive) {
     var viewport = Uniform.createFloat2([1, 1], 'uLightPointViewport');
     var pixelSize = Uniform.createFloat2([0, 30], 'uLightPointPixelSize');
     var maxDistance = Uniform.createFloat1(1, 'uLightPointMaxDistance');
+    var glowUniform = Uniform.createFloat2(glow, 'uLightPointGlow');
+    var starUniform = Uniform.createFloat1(star, 'uLightPointStar');
     stateset.addUniform(viewport);
     stateset.addUniform(pixelSize);
     stateset.addUniform(maxDistance);
+    stateset.addUniform(glowUniform);
+    stateset.addUniform(starUniform);
     stateset.addUniform(Uniform.createFloat1(0, 'uLightPointDepthPass'));
 
     var depthGeometry = new Geometry();
@@ -112,6 +127,8 @@ var createBatch = function(owner, points, additive) {
     depthStateset.addUniform(viewport);
     depthStateset.addUniform(pixelSize);
     depthStateset.addUniform(maxDistance);
+    depthStateset.addUniform(glowUniform);
+    depthStateset.addUniform(starUniform);
     depthStateset.addUniform(Uniform.createFloat1(1, 'uLightPointDepthPass'));
     geometry._lightPointDepthPass = depthGeometry;
     var inverse = mat4.create();
@@ -126,12 +143,18 @@ var createBatch = function(owner, points, additive) {
         viewport.apply(gl, uniforms.uLightPointViewport);
         pixelSize.apply(gl, uniforms.uLightPointPixelSize);
         maxDistance.apply(gl, uniforms.uLightPointMaxDistance);
+        glowUniform.apply(gl, uniforms.uLightPointGlow);
+        starUniform.apply(gl, uniforms.uLightPointStar);
         // A cached VAO may stay bound between draws; Geometry only refreshes
         // its attribute buffers when the VAO changes.
         attributes.Color.bind(gl);
         attributes.Color.compile(gl);
         attributes.Radius.bind(gl);
         attributes.Radius.compile(gl);
+        attributes.Intensity.bind(gl);
+        attributes.Intensity.compile(gl);
+        attributes.Animated.bind(gl);
+        attributes.Animated.compile(gl);
         Geometry.prototype.drawImplementation.call(target, state);
     };
 
@@ -147,9 +170,12 @@ var createBatch = function(owner, points, additive) {
             vec3.sub(direction, eye, point._position);
             var intensity = owner.getLightPointIntensity(point, direction);
             owner.evaluateLightPoint(point, direction, color, intensity);
+            var isAnimated = owner.isLightPointAnimated(point) ? 1 : 0;
             for (var j = 0; j < 4; j++) {
                 colors.set(color, i * 16 + j * 4);
                 radii[i * 4 + j] = point._radius * Math.sqrt(intensity);
+                intensities[i * 4 + j] = intensity;
+                animated[i * 4 + j] = isAnimated;
             }
             if (!additive) {
                 var p = points[order[i].index]._position;
@@ -158,6 +184,8 @@ var createBatch = function(owner, points, additive) {
         }
         attributes.Color.dirty();
         attributes.Radius.dirty();
+        attributes.Intensity.dirty();
+        attributes.Animated.dirty();
         if (!additive) {
             order.sort(function(a, b) {
                 return a.depth - b.depth;
@@ -170,6 +198,8 @@ var createBatch = function(owner, points, additive) {
         viewport.setFloat2(viewportSize);
         pixelSize.setFloat2([owner._minPixelSize, owner._maxPixelSize]);
         maxDistance.setFloat(Math.sqrt(owner._maxVisibleDistance2));
+        glowUniform.setFloat2(glow);
+        starUniform.setFloat(star);
         drawWithDynamicData(this, state);
     };
     // Runs later in the same render stage, reusing this frame's colors,
@@ -181,7 +211,7 @@ var createBatch = function(owner, points, additive) {
 };
 
 /**
- * Batched, emissive light points with a smooth falloff and faint glow. They are
+ * Batched, emissive light points with a smooth falloff and a glow. They are
  * occluded by opaque geometry, dimmed by transparent geometry in front of them,
  * and do not illuminate other objects.
  */
@@ -289,17 +319,16 @@ utils.createPrototypeNode(
         },
         getLightPointIntensity: function(point, direction) {
             if (!point._on) return 0;
+            // A system brightens or dims its light points as a group (native
+            // osgSim replaces their intensity instead).
             var intensity = this._lightPointSystem
-                ? this._lightPointSystem.Intensity
+                ? this._lightPointSystem.Intensity * point._intensity
                 : point._intensity;
             return Math.max(0, intensity) * lightPointUtils.sectorFactor(point._sector, direction);
         },
         evaluateLightPoint: function(point, direction, result, intensity) {
             if (intensity === undefined) intensity = this.getLightPointIntensity(point, direction);
-            var sequence =
-                !this._lightPointSystem || this._lightPointSystem.AnimationState === 'ANIMATION_ON'
-                    ? point._blinkSequence
-                    : undefined;
+            var sequence = this._getActiveBlinkSequence(point);
             var blink = lightPointUtils.pulseColor(
                 sequence,
                 this._simulationTime,
@@ -309,6 +338,20 @@ utils.createPrototypeNode(
             for (var i = 0; i < 3; i++) result[i] = point._color[i] * blink[i];
             result[3] = intensity > 0 ? Math.max(0, Math.min(1, point._color[3] * blink[3])) : 0;
             return result;
+        },
+        // Native osgSim only blinks for ANIMATION_ON.
+        _getActiveBlinkSequence: function(point) {
+            return !this._lightPointSystem ||
+                this._lightPointSystem.AnimationState === 'ANIMATION_ON'
+                ? point._blinkSequence
+                : undefined;
+        },
+        /**
+         * @returns {boolean} True if the light point currently blinks.
+         */
+        isLightPointAnimated: function(point) {
+            var sequence = this._getActiveBlinkSequence(point);
+            return sequence !== undefined && sequence.Pulses.length > 0;
         },
         _rebuild: function() {
             if (!this._dirtyLightPoints) return;
@@ -384,5 +427,40 @@ utils.createPrototypeNode(
     'osg',
     'LightPointNode'
 );
+
+/**
+ * Sets the glow drawn around all light points, like the glare of bright
+ * lights in a camera or the eye. Light point records don't define it.
+ * @param {number} scale Glow radius relative to the light's radius in pixels (>= 1).
+ * @param {number} intensity Glow intensity at the light's center (0 disables it).
+ */
+LightPointNode.setGlow = function(scale, intensity) {
+    if (!Number.isFinite(scale) || scale < 1)
+        throw new RangeError('Invalid light-point glow scale');
+    glow = [scale, nonnegative(intensity, 'glow intensity')];
+};
+
+/**
+ * @returns {number[]} The glow radius scale and intensity, see setGlow.
+ */
+LightPointNode.getGlow = function() {
+    return glow.slice();
+};
+
+/**
+ * Sets the intensity of the star of soft rays drawn around animated light
+ * points, e.g. strobes, while they flash.
+ * @param {number} intensity Ray intensity (0 disables the star).
+ */
+LightPointNode.setStar = function(intensity) {
+    star = nonnegative(intensity, 'star intensity');
+};
+
+/**
+ * @returns {number} The star intensity, see setStar.
+ */
+LightPointNode.getStar = function() {
+    return star;
+};
 
 export default LightPointNode;
