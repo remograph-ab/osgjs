@@ -1,6 +1,7 @@
 import P from 'bluebird';
 import utils from 'osg/utils';
 import Sequence from 'osg/Sequence';
+import Dof from 'osg/Dof';
 import LightPoint from 'osg/LightPoint';
 import lightPointUtils from 'osg/lightPointUtils';
 import TransformEnums from 'osg/transformEnums';
@@ -550,6 +551,57 @@ osgWrapper.MultiSwitch = function(input, multiSwitch) {
     }
 
     return osgWrapper.Node(input, multiSwitch);
+};
+
+var isNumberArray = function(value, length) {
+    return Array.isArray(value) && value.length === length && value.every(isNumber);
+};
+
+var dofVec3Fields = [
+    'MinHPR',
+    'MaxHPR',
+    'CurrentHPR',
+    'IncrementHPR',
+    'MinTranslate',
+    'MaxTranslate',
+    'CurrentTranslate',
+    'IncrementTranslate',
+    'MinScale',
+    'MaxScale',
+    'CurrentScale',
+    'IncrementScale'
+];
+var dofMatrixFields = ['PutMatrix', 'InversePutMatrix'];
+
+osgWrapper.Dof = function(input, dof) {
+    var jsonObj = input.getJSON();
+    var multOrder =
+        jsonObj.HPRMultOrder === undefined ? 0 : Dof.MULT_ORDER_NAMES.indexOf(jsonObj.HPRMultOrder);
+    var invalid =
+        multOrder < 0 ||
+        dofVec3Fields.some(function(field) {
+            return jsonObj[field] !== undefined && !isNumberArray(jsonObj[field], 3);
+        }) ||
+        dofMatrixFields.some(function(field) {
+            return jsonObj[field] !== undefined && !isNumberArray(jsonObj[field], 16);
+        }) ||
+        (jsonObj.LimitationFlags !== undefined && !Number.isInteger(jsonObj.LimitationFlags));
+    if (invalid) return rejectObject('Dof', jsonObj);
+
+    for (var i = 0; i < dofVec3Fields.length; i++) {
+        var field = dofVec3Fields[i];
+        if (jsonObj[field] !== undefined) dof['set' + field](jsonObj[field]);
+    }
+    for (var j = 0; j < dofMatrixFields.length; j++) {
+        var matrixField = dofMatrixFields[j];
+        if (jsonObj[matrixField] !== undefined) dof['set' + matrixField](jsonObj[matrixField]);
+    }
+    dof.setLimitationFlags(jsonObj.LimitationFlags || 0);
+    dof.setHPRMultOrder(multOrder);
+    if (jsonObj.ReferenceFrame === 'ABSOLUTE_RF') dof.setReferenceFrame(TransformEnums.ABSOLUTE_RF);
+    dof.setAnimationOn(jsonObj.AnimationOn === true);
+
+    return osgWrapper.Node(input, dof);
 };
 
 osgWrapper.PagedLOD = function(input, plod) {

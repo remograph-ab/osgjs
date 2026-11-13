@@ -10,6 +10,7 @@ import ComputeMatrixFromNodePath from 'tests/osg/ComputeMatrixFromNodePath';
 import CullFace from 'tests/osg/CullFace';
 import CullVisitor from 'tests/osg/CullVisitor';
 import Depth from 'tests/osg/Depth';
+import Dof from 'tests/osg/Dof';
 import FrameBufferObject from 'tests/osg/FrameBufferObject';
 import KdTree from 'tests/osg/KdTree';
 import Light from 'tests/osg/Light';
@@ -49,6 +50,7 @@ export default function() {
     CullVisitor();
     CullFace();
     Depth();
+    Dof();
     FrameBufferObject();
     KdTree();
     Light();
