@@ -79,6 +79,10 @@ var CullVisitor = function() {
     this._numNode = 0;
     this._numLightSource = 0;
     this._numGeometry = 0;
+
+    // Active wireframe entries pushed by pushWireframe, reused between frames
+    this._wireframeStack = [];
+    this._wireframeDepth = 0;
 };
 
 CullVisitor.registerApplyFunction = cullVisitorHelper.registerApplyFunction;
@@ -192,6 +196,70 @@ utils.createPrototypeObject(
 
                 this._computedNear = Number.POSITIVE_INFINITY;
                 this._computedFar = Number.NEGATIVE_INFINITY;
+                this._wireframeDepth = 0;
+            },
+
+            /**
+             * Starts drawing geometries as wireframe, until the matching popWireframe.
+             * Typically called from a cull callback (see osgUtil.WireframeCullCallback) around
+             * the traversal of its node, so geometries paged in later get wireframe as well.
+             * Wireframe lines are drawn with the state above the node, plus wireframe.getStateSet(),
+             * so they don't inherit textures or shader programs from the node and its subgraph.
+             * @param {Object} wireframe Has getStateSet() and getScribed() (true to also draw the solid geometry).
+             * @param {Node} node (optional) The node whose cull callback is calling, its stateset is excluded.
+             */
+            pushWireframe: function(wireframe, node) {
+                var stateGraph = this._currentStateGraph;
+                var renderBin = this._currentRenderBin;
+                var stateSet = node !== undefined ? node.getStateSet() : undefined;
+                if (stateSet !== undefined) {
+                    // Cull callbacks are called after the node stateset has been pushed
+                    stateGraph = stateGraph.getParent();
+                    if (stateSet.getBinName() !== undefined) {
+                        var renderBinStack = this._renderBinStack;
+                        renderBin = renderBinStack.getLength() ? renderBinStack.back() : renderBin.getStage();
+                    }
+                }
+
+                var entry = this._wireframeStack[this._wireframeDepth];
+                if (entry === undefined) {
+                    entry = {};
+                    this._wireframeStack[this._wireframeDepth] = entry;
+                }
+                entry.wireframe = wireframe;
+                entry.stateGraph = stateGraph;
+                entry.renderBin = renderBin;
+                this._wireframeDepth++;
+            },
+
+            popWireframe: function() {
+                this._wireframeDepth--;
+                this._wireframeStack[this._wireframeDepth].wireframe = undefined;
+            },
+
+            getCurrentWireframe: function() {
+                return this._wireframeDepth > 0 ? this._wireframeStack[this._wireframeDepth - 1] : undefined;
+            },
+
+            pushWireframeLeaf: function(geometry, depth, entry) {
+                var wireframeGeometry = geometry.getOrCreateWireframeGeometry();
+                if (wireframeGeometry === undefined) return;
+                if (wireframeGeometry.getControlledNearFar() !== geometry.getControlledNearFar()) {
+                    wireframeGeometry.setControlledNearFar(geometry.getControlledNearFar());
+                }
+
+                var currentStateGraph = this._currentStateGraph;
+                var currentRenderBin = this._currentRenderBin;
+                this._currentStateGraph = entry.stateGraph;
+                this._currentRenderBin = entry.renderBin;
+
+                var stateSet = entry.wireframe.getStateSet();
+                if (stateSet) this.pushStateSet(stateSet);
+                this.pushLeaf(wireframeGeometry, depth);
+                if (stateSet) this.popStateSet();
+
+                this._currentStateGraph = currentStateGraph;
+                this._currentRenderBin = currentRenderBin;
             },
 
             getCurrentRenderBin: function() {
@@ -694,7 +762,13 @@ var geometryApply = function(node) {
             loggedOnce = true;
         }
     } else {
-        this.pushLeaf(node, depth);
+        var wireframe = this.getCurrentWireframe();
+        if (wireframe === undefined || wireframe.wireframe.getScribed()) {
+            this.pushLeaf(node, depth);
+        }
+        if (wireframe !== undefined) {
+            this.pushWireframeLeaf(node, depth, wireframe);
+        }
     }
 
     this.prePopGeometry(this, node);

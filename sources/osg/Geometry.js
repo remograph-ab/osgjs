@@ -3,6 +3,9 @@ import notify from 'osg/notify';
 import Node from 'osg/Node';
 import WebGLCaps from 'osg/WebGLCaps';
 import DrawElements from 'osg/DrawElements';
+import BufferArray from 'osg/BufferArray';
+import TriangleIndexFunctor from 'osg/TriangleIndexFunctor';
+import primitiveSet from 'osg/primitiveSet';
 import BufferArrayProxy from 'osg/BufferArrayProxy';
 import VertexArrayObject from 'osg/VertexArrayObject';
 import { mat4 } from 'osg/glMatrix';
@@ -36,6 +39,11 @@ var Geometry = function() {
 
     this._controlledNearFar = undefined;
     this._controlledNearFarProjectionMatrix = undefined;
+
+    // Lazily created LINES geometry sharing this geometry's vertices, used by the
+    // CullVisitor when the geometry is culled below a wireframe cull callback.
+    // null means there was nothing to create a wireframe from.
+    this._wireframeGeometry = undefined;
 };
 
 Geometry.enableVAO = true;
@@ -63,6 +71,7 @@ utils.createPrototypeNode(
             }
 
             this.releaseVAO();
+            this.releaseWireframeGeometry();
         },
 
         releaseVAO: function() {
@@ -491,6 +500,71 @@ utils.createPrototypeNode(
         
         isNearFarControlled: function() {
             return (this._controlledNearFar !== undefined);
+        },
+
+        /**
+         * Returns a LINES geometry with the triangle edges of this geometry, creating it on first call.
+         * The vertex buffer is shared with this geometry, only an index buffer is added.
+         * Returns undefined if this geometry has no triangles.
+         */
+        getOrCreateWireframeGeometry: function() {
+            var vertices = this._attributes.Vertex;
+            var wireframeGeometry = this._wireframeGeometry;
+            if (wireframeGeometry !== undefined) {
+                if (wireframeGeometry === null) return undefined;
+                // Recreate if the vertex buffer has been replaced
+                if (wireframeGeometry.getAttributes().Vertex === vertices) return wireframeGeometry;
+                this.releaseWireframeGeometry();
+            }
+
+            this._wireframeGeometry = null;
+            if (vertices === undefined || !vertices.getElements()) return undefined;
+
+            // Count first to fill a typed array directly, this runs while culling
+            var numTriangles = 0;
+            var functor = new TriangleIndexFunctor();
+            functor.init(this, function(i1, i2, i3) {
+                if (i1 !== i2 && i1 !== i3 && i2 !== i3) numTriangles++;
+            });
+            functor.apply();
+            if (numTriangles === 0) return undefined;
+
+            var numVertices = vertices.getElements().length / vertices.getItemSize();
+            var IndexArray = numVertices > 65536 ? utils.Uint32Array : utils.Uint16Array;
+            var lineIndices = new IndexArray(numTriangles * 6);
+            var j = 0;
+            functor.init(this, function(i1, i2, i3) {
+                if (i1 === i2 || i1 === i3 || i2 === i3) return;
+                lineIndices[j++] = i1;
+                lineIndices[j++] = i2;
+                lineIndices[j++] = i2;
+                lineIndices[j++] = i3;
+                lineIndices[j++] = i3;
+                lineIndices[j++] = i1;
+            });
+            functor.apply();
+            var indices = new BufferArray(BufferArray.ELEMENT_ARRAY_BUFFER, lineIndices, 1);
+
+            wireframeGeometry = new Geometry();
+            wireframeGeometry.setName('wireframe');
+            wireframeGeometry.getAttributes().Vertex = vertices;
+            wireframeGeometry.getPrimitives().push(new DrawElements(primitiveSet.LINES, indices));
+            wireframeGeometry.setControlledNearFar(this._controlledNearFar);
+            this._wireframeGeometry = wireframeGeometry;
+            return wireframeGeometry;
+        },
+
+        /**
+         * Releases the wireframe geometry created by getOrCreateWireframeGeometry, if any.
+         */
+        releaseWireframeGeometry: function() {
+            var wireframeGeometry = this._wireframeGeometry;
+            this._wireframeGeometry = undefined;
+            if (!wireframeGeometry) return;
+
+            // The vertex buffer belongs to this geometry, so only release the line indices
+            wireframeGeometry.getPrimitives()[0].getIndices().releaseGLObjects();
+            wireframeGeometry.releaseVAO();
         }
     }),
     'osg',

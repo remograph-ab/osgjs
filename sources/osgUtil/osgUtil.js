@@ -18,6 +18,7 @@ import SphereIntersector from 'osgUtil/SphereIntersector';
 import TangentSpaceGenerator from 'osgUtil/TangentSpaceGenerator';
 import WebVRCustom from 'osgUtil/WebVRCustom';
 import WebVR from 'osgUtil/WebVR';
+import WireframeCullCallback from 'osgUtil/WireframeCullCallback';
 import intersectionEnums from 'osgUtil/intersectionEnums';
 
 var osgUtil = {};
@@ -41,6 +42,7 @@ osgUtil.PolytopeIntersectFunctor = PolytopeIntersectFunctor;
 osgUtil.SphereIntersector = SphereIntersector;
 osgUtil.TangentSpaceGenerator = TangentSpaceGenerator;
 osgUtil.WebVR = WebVR;
+osgUtil.WireframeCullCallback = WireframeCullCallback;
 
 osgUtil.NO_LIMIT = intersectionEnums.NO_LIMIT;
 osgUtil.LIMIT_ONE_PER_DRAWABLE = intersectionEnums.LIMIT_ONE_PER_DRAWABLE;

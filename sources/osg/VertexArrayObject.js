@@ -76,6 +76,7 @@ utils.createPrototypeObject(
             if (this._vaoObject !== undefined && this._gl !== undefined) {
                 VertexArrayObject.deleteGLVertexArrayObject(this._gl, this._vaoObject);
                 GLObject.removeObject(this._gl, this);
+                this._gl = undefined;
             }
             this.invalidate();
         },

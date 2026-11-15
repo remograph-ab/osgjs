@@ -157,6 +157,26 @@ utils.createPrototypeObject(
             this._vertexAttribMap._keys = [];
 
             this._programCommonUniformsCache = {};
+
+            // A restored context starts with the default GL state, so also forget what has been
+            // applied (e.g. depth test, culling, blending, the program and textures) to apply it all again.
+            // Otherwise e.g. the depth test stays disabled, since it is believed to be enabled already.
+            this._stateCache = new StateCache();
+            this._program = undefined;
+            this._lastAppliedModelViewMatrix = undefined;
+            this._lastAppliedProjectionMatrix = undefined;
+
+            var i;
+            for (i = 0; i < this._attributeArray.length; i++) {
+                if (this._attributeArray[i]) this._attributeArray[i]._lastApplied = undefined;
+            }
+            for (i = 0; i < this._textureAttributeArrayList.length; i++) {
+                var textureAttributeArray = this._textureAttributeArrayList[i];
+                if (!textureAttributeArray) continue;
+                for (var j = 0; j < textureAttributeArray.length; j++) {
+                    if (textureAttributeArray[j]) textureAttributeArray[j]._lastApplied = undefined;
+                }
+            }
         },
 
         applyColorMask: function(attribute) {

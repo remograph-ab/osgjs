@@ -466,6 +466,9 @@ utils.createPrototypeObject(
 
         render: function() {
             if (!this.done()) {
+                // Cancel any frame already requested, so that starting the loop again while it
+                // runs (e.g. run soon after stop, or a restored context) never leaves two loops drawing
+                window.cancelAnimationFrame(this._requestID);
                 this._requestID = this._requestAnimationFrame(this.renderBinded, this._canvas);
                 this.frame();
             }

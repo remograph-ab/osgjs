@@ -5,6 +5,7 @@ import StateSet from 'osg/StateSet';
 import Material from 'osg/Material';
 import StateAttribute from 'osg/StateAttribute';
 import Texture from 'osg/Texture';
+import Depth from 'osg/Depth';
 import ShaderGeneratorProxy from 'osgShader/ShaderGeneratorProxy';
 import mockup from 'tests/mockup/mockup';
 
@@ -33,6 +34,36 @@ export default function() {
                 'check Override in state'
             );
         })();
+    });
+
+    test('State resetCaches after a lost context applies the state again', function() {
+        var state = new State(new ShaderGeneratorProxy());
+        var enabled = [];
+        var gl = {
+            DEPTH_TEST: 0x0b71,
+            enable: function(cap) {
+                enabled.push(cap);
+            },
+            disable: function() {},
+            depthFunc: function() {},
+            depthRange: function() {}
+        };
+
+        var depth = new Depth(Depth.LESS);
+        state.applyAttribute(depth);
+        state._stateCache.applyDepth(gl);
+        assert.deepEqual(enabled, [gl.DEPTH_TEST], 'Check depth test enabled');
+
+        // The same depth attribute is not applied twice
+        state.applyAttribute(depth);
+        state._stateCache.applyDepth(gl);
+        assert.deepEqual(enabled, [gl.DEPTH_TEST], 'Check depth test enabled once');
+
+        // A restored context has the depth test disabled, so it must be enabled again
+        state.resetCaches();
+        state.applyAttribute(depth);
+        state._stateCache.applyDepth(gl);
+        assert.deepEqual(enabled, [gl.DEPTH_TEST, gl.DEPTH_TEST], 'Check depth test enabled again');
     });
 
     test('State setGlobalDefaultTextureAttribute', function() {

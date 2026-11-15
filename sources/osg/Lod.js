@@ -242,7 +242,7 @@ utils.createPrototypeNode(
                             var d = vec3.distance(this.getBound().center(), eye);
                             requiredRange = d * visitor.getLODScale();
                         } else {
-                            // SPOTSCALE: To avoid distorted bounding spheres near edges of screen resulting in
+                            // To avoid distorted bounding spheres near edges of screen resulting in
                             // larger pixel area than bounding sphere straight ahead, use radius-based calculation from OSG instead:
                             var vp = lodOverride ? lodOverride.viewport : visitor.getViewport();
                             var proj = lodOverride

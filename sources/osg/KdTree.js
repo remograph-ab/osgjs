@@ -439,7 +439,7 @@ var KdTree = function() {
     this._vertexIndices = undefined;
     this._numVertexIndices = 0;
     this._numPrimitiveIndices = 0;
-    // SPOTSCALE: The locally clipped segment per tree depth when intersecting, see intersectLineSegment
+    // The locally clipped segment per tree depth when intersecting, see intersectLineSegment
     this._segmentStack = [];
 };
 
@@ -561,7 +561,7 @@ utils.createPrototypeObject(
             this._intersectLineSegment(functor, node, ls, le, 0);
         },
 
-        // SPOTSCALE: The clipped segment used to live in two vec3 on every KdNode, about a third of
+        // The clipped segment used to live in two vec3 on every KdNode, about a third of
         // the memory of a node. Only one node per depth is being intersected at a time, so a pair
         // per depth is enough, and the depth is bounded by the maximum number of levels when building
         _intersectLineSegment: function(functor, node, ls, le, depth) {

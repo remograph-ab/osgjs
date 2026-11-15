@@ -180,6 +180,8 @@ utils.createPrototypeObject(
             if (this._gl !== undefined) {
                 Shader.deleteGLShader(this._gl, this.shader);
                 GLObject.removeObject(this._gl, this);
+                // Forget the context so that it is registered again when used again, otherwise a lost context would not invalidate it
+                this._gl = undefined;
             }
             this.invalidate();
         },

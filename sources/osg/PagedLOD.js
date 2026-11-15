@@ -169,7 +169,7 @@ utils.createPrototypeNode(
 
                         if (this._rangeMode === Lod.DISTANCE_FROM_EYE_POINT) {
                             // Calculate distance from viewpoint
-                            // SPOTSCALE: Only need for this with distance from eye point now
+                            // Only need for this with distance from eye point now
                             var matrix = visitor.getCurrentModelViewMatrix();
                             if (lodOverride) {
                                 mat4.mul(mvOverride, lodOverride.viewShift, matrix);
@@ -181,7 +181,7 @@ utils.createPrototypeNode(
 
                             requiredRange = distance * visitor.getLODScale();
                         } else {
-                            // SPOTSCALE: To avoid distorted bounding spheres near edges of screen resulting in
+                            // To avoid distorted bounding spheres near edges of screen resulting in
                             // larger pixel area than bounding sphere straight ahead, use radius-based calculation from OSG instead:
                             var vp = lodOverride ? lodOverride.viewport : visitor.getViewport();
                             var proj = lodOverride

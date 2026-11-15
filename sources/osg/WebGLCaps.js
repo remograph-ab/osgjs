@@ -410,15 +410,25 @@ WebGLCaps.prototype = {
         var prefix = '_' + suffix;
         var suffixRE = new RegExp(suffix + '$');
         var prefixRE = new RegExp(prefix);
+        // Remember what was copied from extensions, to copy it again from the new extension
+        // objects after a lost context. Kept bound to the lost ones, e.g. bindVertexArray would do nothing.
+        if (gl._osgjsExtensionKeys === undefined) gl._osgjsExtensionKeys = {};
+        var copiedKeys = gl._osgjsExtensionKeys;
         for (var key in ext) {
             var val = ext[key];
             if (typeof val === 'function') {
                 // remove suffix (eg: bindVertexArrayOES -> bindVertexArray)
                 var unsuffixedKey = key.replace(suffixRE, '');
-                if (gl[unsuffixedKey] === undefined) gl[unsuffixedKey] = ext[key].bind(ext);
+                if (gl[unsuffixedKey] === undefined || copiedKeys[unsuffixedKey]) {
+                    gl[unsuffixedKey] = ext[key].bind(ext);
+                    copiedKeys[unsuffixedKey] = true;
+                }
             } else {
                 var unprefixedKey = key.replace(prefixRE, '');
-                if (gl[unprefixedKey] === undefined) gl[unprefixedKey] = ext[key];
+                if (gl[unprefixedKey] === undefined || copiedKeys[unprefixedKey]) {
+                    gl[unprefixedKey] = ext[key];
+                    copiedKeys[unprefixedKey] = true;
+                }
             }
         }
     },
