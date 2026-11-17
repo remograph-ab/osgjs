@@ -34,6 +34,18 @@ Lod.UNION_OF_BOUNDING_SPHERE_AND_USER_DEFINED = 2;
 utils.createPrototypeNode(
     Lod,
     utils.objectInherit(Node.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Node.prototype._copyFrom.call(this, node, copyOp);
+            this._radius = node._radius;
+            this._range = node._range.map(function(range) {
+                return range.slice();
+            });
+            this._rangeMode = node._rangeMode;
+            this._userDefinedCenter = node._userDefinedCenter.slice();
+            this._centerMode = node._centerMode;
+            this._userDefinedRadius = node._userDefinedRadius;
+        },
+
         // Functions here
         getRadius: function() {
             return this._radius;

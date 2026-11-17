@@ -12,6 +12,11 @@ var UpdateRigGeometry = function() {
 utils.createPrototypeObject(
     UpdateRigGeometry,
     utils.objectInherit(ObjectBase.prototype, {
+        clone: function(/*copyOp*/) {
+            // Finds the skeleton of the copied geometry on its first update
+            return new UpdateRigGeometry();
+        },
+
         init: function(geom) {
             var finder = new FindNearestParentSkeleton();
             if (geom.getParents().length > 1)

@@ -19,6 +19,23 @@ var UpdateMatrixTransform = function() {
 utils.createPrototypeObject(
     UpdateMatrixTransform,
     utils.objectInherit(AnimationUpdateCallback.prototype, {
+        /**
+         * Clones this callback with copies of its stacked transforms, so that the copy is animated independently.
+         * Also used by UpdateBone.
+         * @param { CopyOp } copyOp The copy operation.
+         * @returns { UpdateMatrixTransform } The copy.
+         */
+        clone: function(copyOp) {
+            var copy = this.cloneType();
+            copy.setName(this.getName());
+            var stacked = this._stackedTransforms;
+            for (var i = 0, l = stacked.length; i < l; i++)
+                copy._stackedTransforms.push(copyOp.cloneCallback(stacked[i]));
+            mat4.copy(copy._matrix, this._matrix);
+            copy._dirty = true;
+            return copy;
+        },
+
         getStackedTransforms: function() {
             return this._stackedTransforms;
         },

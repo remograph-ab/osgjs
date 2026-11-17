@@ -38,6 +38,26 @@ var PerRangeData = function() {
 utils.createPrototypeNode(
     PagedLOD,
     utils.objectInherit(Lod.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Lod.prototype._copyFrom.call(this, node, copyOp);
+            this._perRangeDataList = node._perRangeDataList.map(function(source) {
+                var data = new PerRangeData();
+                data.filename = source.filename;
+                data.function = source.function;
+                // Children loaded in the source were cloned, while pending requests are made again by the copy
+                data.loaded = source.loaded;
+                data.timeStamp = source.timeStamp;
+                data.frameNumber = source.frameNumber;
+                data.frameNumberOfLastTraversal = source.frameNumberOfLastTraversal;
+                return data;
+            });
+            this._expiryTime = node._expiryTime;
+            this._expiryFrame = node._expiryFrame;
+            this._frameNumberOfLastTraversal = node._frameNumberOfLastTraversal;
+            this._databasePath = node._databasePath;
+            this._numChildrenThatCannotBeExpired = node._numChildrenThatCannotBeExpired;
+        },
+
         // Functions here
         setRange: function(childNo, min, max) {
             if (childNo >= this._range.length) {

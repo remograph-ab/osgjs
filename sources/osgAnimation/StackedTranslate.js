@@ -16,6 +16,13 @@ var StackedTranslate = function(name, translate) {
 utils.createPrototypeObject(
     StackedTranslate,
     utils.objectInherit(Object.prototype, {
+        clone: function(/*copyOp*/) {
+            var copy = this.cloneType();
+            copy.setName(this.getName());
+            copy._target = Target.copyTarget(this._target);
+            return copy;
+        },
+
         init: function(translate) {
             this.setTranslate(translate);
             vec3.copy(this._target.defaultValue, translate);

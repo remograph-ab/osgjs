@@ -16,6 +16,14 @@ var StackedRotateAxis = function(name, axis, angle) {
 utils.createPrototypeObject(
     StackedRotateAxis,
     utils.objectInherit(Object.prototype, {
+        clone: function(/*copyOp*/) {
+            var copy = this.cloneType();
+            copy.setName(this.getName());
+            copy._target = Target.copyTarget(this._target);
+            copy._axis = this._axis.slice();
+            return copy;
+        },
+
         init: function(axis, angle) {
             this.setAxis(axis);
             this.setAngle(angle);

@@ -46,6 +46,11 @@ var ShadowedScene = function(settings) {
 utils.createPrototypeNode(
     ShadowedScene,
     utils.objectInherit(Node.prototype, {
+        _copyFrom: function(/*node, copyOp*/) {
+            // Shadow techniques have per-scene state and references to their scene
+            throw new Error('osgShadow.ShadowedScene cannot be cloned');
+        },
+
         getReceivingStateSet: function() {
             return this._receivingStateset;
         },

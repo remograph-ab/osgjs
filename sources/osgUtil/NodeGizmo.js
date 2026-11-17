@@ -215,6 +215,11 @@ utils.createPrototypeObject(
 utils.createPrototypeNode(
     NodeGizmo,
     utils.objectInherit(MatrixTransform.prototype, {
+        _copyFrom: function(/*node, copyOp*/) {
+            // The gizmo is bound to a viewer and its input handling
+            throw new Error('osgUtil.NodeGizmo cannot be cloned');
+        },
+
         setRotateInLocal: function(bool) {
             this._rotateInLocal = bool;
         },

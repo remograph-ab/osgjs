@@ -15,6 +15,13 @@ var StackedQuaternion = function(name, q) {
 utils.createPrototypeObject(
     StackedQuaternion,
     utils.objectInherit(Object.prototype, {
+        clone: function(/*copyOp*/) {
+            var copy = this.cloneType();
+            copy.setName(this.getName());
+            copy._target = Target.copyTarget(this._target);
+            return copy;
+        },
+
         init: function(q) {
             this.setQuaternion(q);
             quat.copy(this._target.defaultValue, q);

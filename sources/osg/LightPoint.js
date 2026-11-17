@@ -28,6 +28,24 @@ LightPoint.BLENDED = 1;
 utils.createPrototypeObject(
     LightPoint,
     utils.objectInherit(OSGObject.prototype, {
+        /**
+         * Clones this light point. Its sector and blink sequence are copied, but kept shared within the copy operation.
+         * @param { CopyOp } copyOp The copy operation.
+         * @returns { LightPoint } The copy.
+         */
+        clone: function(copyOp) {
+            var copy = new LightPoint(this._position.slice(), this._color.slice());
+            copy.setName(this.getName());
+            copy.setUserData(this.getUserData());
+            copy._on = this._on;
+            copy._intensity = this._intensity;
+            copy._radius = this._radius;
+            copy._blendingMode = this._blendingMode;
+            copy._sector = copyOp.copyData(this._sector);
+            copy._blinkSequence = copyOp.copyData(this._blinkSequence);
+            return copy;
+        },
+
         setOn: function(on) {
             if (typeof on !== 'boolean') throw new TypeError('Invalid LightPoint on flag');
             this._on = on;

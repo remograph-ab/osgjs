@@ -50,6 +50,27 @@ utils.createPrototypeNode(
         CullSettings.prototype,
         utils.objectInherit(Transform.prototype, {
             // at which view this camera is attached
+            _copyFrom: function(node, copyOp) {
+                Transform.prototype._copyFrom.call(this, node, copyOp);
+                this.setCullSettings(node);
+                if (node._settingsSourceOverrider === node) this._settingsSourceOverrider = this;
+                this._LODScale = node._LODScale;
+                // Viewport, scissor, frame buffer object and attachments are shared, like other state attributes
+                this.viewport = node.viewport;
+                this._scissor = node._scissor;
+                this.setClearColor(node.getClearColor().slice());
+                this.setClearDepth(node.getClearDepth());
+                this.setClearMask(node.getClearMask());
+                this.setViewMatrix(mat4.copy(mat4.create(), node.getViewMatrix()));
+                this.setProjectionMatrix(mat4.copy(mat4.create(), node.getProjectionMatrix()));
+                this.renderOrder = node.renderOrder;
+                this.renderOrderNum = node.renderOrderNum;
+                this.frameBufferObject = node.frameBufferObject;
+                this._attachments = Object.assign({}, node._attachments);
+                this._initialDrawCallback = node._initialDrawCallback;
+                this._finalDrawCallback = node._finalDrawCallback;
+            },
+
             getView: function() {
                 return this._view;
             },

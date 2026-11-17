@@ -13,6 +13,13 @@ var StackedScale = function(name, scale) {
 utils.createPrototypeObject(
     StackedScale,
     utils.objectInherit(Object.prototype, {
+        clone: function(/*copyOp*/) {
+            var copy = this.cloneType();
+            copy.setName(this.getName());
+            copy._target = Target.copyTarget(this._target);
+            return copy;
+        },
+
         init: function(scale) {
             this.setScale(scale);
             vec3.copy(this._target.defaultValue, scale);

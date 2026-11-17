@@ -18,6 +18,13 @@ var LightSource = function() {
 utils.createPrototypeNode(
     LightSource,
     utils.objectInherit(Node.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Node.prototype._copyFrom.call(this, node, copyOp);
+            // The light is shared, like other state attributes
+            this._light = node._light;
+            this._referenceFrame = node._referenceFrame;
+        },
+
         getLight: function() {
             return this._light;
         },

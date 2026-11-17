@@ -16,6 +16,11 @@ var Switch = function() {
 utils.createPrototypeNode(
     Switch,
     utils.objectInherit(Node.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Node.prototype._copyFrom.call(this, node, copyOp);
+            this._values = node._values.slice();
+        },
+
         addChild: function(node, value) {
             Node.prototype.addChild.call(this, node);
 

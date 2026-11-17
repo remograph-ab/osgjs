@@ -40,6 +40,23 @@ var AutoTransform = function() {
 utils.createPrototypeNode(
     AutoTransform,
     utils.objectInherit(Transform.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Transform.prototype._copyFrom.call(this, node, copyOp);
+            this._matrix = node._matrix.slice();
+            this._position = node._position.slice();
+            this._matrixDirty = true;
+            this._scale = node._scale.slice();
+            this._minimumScale = node._minimumScale;
+            this._maximumScale = node._maximumScale;
+            this._rotation = node._rotation.slice();
+            this._pivotPoint = node._pivotPoint.slice();
+            this._autoScaleToScreen = node._autoScaleToScreen;
+            this._autoRotateToScreen = node._autoRotateToScreen;
+            this._autoScaleTransitionWidthRatio = node._autoScaleTransitionWidthRatio;
+            // The billboard attribute is in the state set, which is shared
+            this._billboardAttribute = node._billboardAttribute;
+        },
+
         getMatrix: function() {
             return this._matrix;
         },

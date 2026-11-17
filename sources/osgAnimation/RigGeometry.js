@@ -53,6 +53,31 @@ var RigGeometry = function() {
 utils.createPrototypeNode(
     RigGeometry,
     utils.objectInherit(Geometry.prototype, {
+        _isSharedInCopy: function(/*copyOp*/) {
+            // Has a per-instance skeleton and bone matrices
+            return false;
+        },
+
+        _copyFrom: function(node, copyOp) {
+            Geometry.prototype._copyFrom.call(this, node, copyOp);
+            // Skinning data is shared, while the skeleton and bones are found on the first update
+            this._shape = node._shape;
+            this._boneNameID = node._boneNameID;
+            var source = node._geometry;
+            if (source instanceof MorphGeometry) {
+                // Use the vertex attributes of the copied morph geometry, which switches them per instance
+                var sourceCopy = copyOp.cloneNode(source);
+                var sourceAttributes = source.getVertexAttributeList();
+                var copyAttributes = sourceCopy.getVertexAttributeList();
+                for (var key in this._attributes) {
+                    if (sourceAttributes[key] === node._attributes[key])
+                        this._attributes[key] = copyAttributes[key];
+                }
+                source = sourceCopy;
+            }
+            this._geometry = source;
+        },
+
         getStateSetAnimation: function() {
             return this._stateSetAnimation;
         },
@@ -120,10 +145,10 @@ utils.createPrototypeNode(
                     idx += itemSize, idb += 4
                 ) {
                     if (
-                        weights[idx] !== 0.0 ||
-                        weights[idx + 1] !== 0.0 ||
-                        weights[idx + 2] !== 0.0 ||
-                        weights[idx + 3] !== 0.0
+                        weights[idb] !== 0.0 ||
+                        weights[idb + 1] !== 0.0 ||
+                        weights[idb + 2] !== 0.0 ||
+                        weights[idb + 3] !== 0.0
                     )
                         continue;
 
@@ -145,6 +170,10 @@ utils.createPrototypeNode(
                 max[1] = maxy;
                 max[2] = maxz;
             }
+
+            // Without any non-influenced vertex, e.g. a fully skinned character, use the bind pose bounding box,
+            // which is better than an empty one for culling and for framing the model
+            if (!boundingBox.valid()) Geometry.prototype.computeBoundingBox.call(this, boundingBox);
 
             return boundingBox;
         },

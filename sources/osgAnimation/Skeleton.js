@@ -40,6 +40,10 @@ var Skeleton = function() {
 utils.createPrototypeNode(
     Skeleton,
     utils.objectInherit(MatrixTransform.prototype, {
+        _copyFrom: function(node, copyOp) {
+            MatrixTransform.prototype._copyFrom.call(this, node, copyOp);
+        },
+
         setDefaultUpdateCallback: function() {
             this.addUpdateCallback(new UpdateSkeleton());
         },

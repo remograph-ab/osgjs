@@ -40,6 +40,20 @@ MorphGeometry.MAX_MORPH_GPU = 4;
 utils.createPrototypeNode(
     MorphGeometry,
     utils.objectInherit(Geometry.prototype, {
+        _isSharedInCopy: function(/*copyOp*/) {
+            // Has per-instance target weights
+            return false;
+        },
+
+        _copyFrom: function(node, copyOp) {
+            Geometry.prototype._copyFrom.call(this, node, copyOp);
+            // Morph targets are shared, while the morph attribute is created on initialization
+            this._shape = node._shape;
+            this._targets = node._targets.slice();
+            this._targetWeights.set(node._targetWeights);
+            this._maxMorphGPU = node._maxMorphGPU;
+        },
+
         init: function() {
             if (this._morphAttribute) {
                 this._isInitialized = true;

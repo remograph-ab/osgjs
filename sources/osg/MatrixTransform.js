@@ -16,6 +16,11 @@ var MatrixTransform = function() {
 utils.createPrototypeNode(
     MatrixTransform,
     utils.objectInherit(Transform.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Transform.prototype._copyFrom.call(this, node, copyOp);
+            this.matrix = mat4.copy(mat4.create(), node.matrix);
+        },
+
         getMatrix: function() {
             return this.matrix;
         },

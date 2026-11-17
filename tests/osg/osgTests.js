@@ -5,6 +5,7 @@ import BoundingSphere from 'tests/osg/BoundingSphere';
 import BufferArray from 'tests/osg/BufferArray';
 import BufferArrayProxy from 'tests/osg/BufferArrayProxy';
 import Camera from 'tests/osg/Camera';
+import Clone from 'tests/osg/Clone';
 import ComputeBoundsVisitor from 'tests/osg/ComputeBoundsVisitor';
 import ComputeMatrixFromNodePath from 'tests/osg/ComputeMatrixFromNodePath';
 import CullFace from 'tests/osg/CullFace';
@@ -45,6 +46,7 @@ export default function() {
     BufferArray();
     BufferArrayProxy();
     Camera();
+    Clone();
     ComputeBoundsVisitor();
     ComputeMatrixFromNodePath();
     CullVisitor();

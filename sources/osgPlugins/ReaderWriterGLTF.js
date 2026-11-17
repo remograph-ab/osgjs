@@ -31,7 +31,7 @@ import UpdateMatrixTransform from 'osgAnimation/UpdateMatrixTransform';
 import fileHelper from 'osgDB/fileHelper';
 
 import Uniform from 'osg/Uniform';
-import { mat4, vec3 } from 'osg/glMatrix';
+import { mat4, vec3, quat } from 'osg/glMatrix';
 
 var createQuatChannel = channelFactory.createQuatChannel;
 var createVec3Channel = channelFactory.createVec3Channel;
@@ -535,7 +535,15 @@ ReaderWriterGLTF.prototype = {
         for (var i = 0; i < images.length; i++) {
             var image = images[i];
             var url = window.decodeURI(image.uri);
-            var promise = this.loadURI(url).then(
+            var promise;
+            if (url.substr(0, 5) === 'data:' || this._filesMap[url] !== undefined) {
+                promise = this.loadURI(url);
+            } else {
+                // An image file relative to the glTF file, like buffers
+                if (url.indexOf('http') === -1) url = this._localPath + url;
+                promise = fileHelper.requestResource(url);
+            }
+            promise = promise.then(
                 function(imageData) {
                     var osgjsImage = new Image();
                     osgjsImage.setImage(imageData);
@@ -560,8 +568,15 @@ ReaderWriterGLTF.prototype = {
 
         // GLTF texture origin is correct
         osgjsTexture.setFlipY(false);
-        osgjsTexture.setWrapS('REPEAT');
-        osgjsTexture.setWrapT('REPEAT');
+
+        // The sampler uses the WebGL enums. Without a sampler or filters, the filtering is up to the implementation, so
+        // use trilinear mipmapping, which avoids flickering of distant textures; the wrap modes default to repeat.
+        var samplers = this._gltfJSON.samplers;
+        var sampler = (samplers && texture.sampler !== undefined ? samplers[texture.sampler] : undefined) || {};
+        osgjsTexture.setMinFilter(sampler.minFilter !== undefined ? sampler.minFilter : Texture.LINEAR_MIPMAP_LINEAR);
+        osgjsTexture.setMagFilter(sampler.magFilter !== undefined ? sampler.magFilter : Texture.LINEAR);
+        osgjsTexture.setWrapS(sampler.wrapS !== undefined ? sampler.wrapS : Texture.REPEAT);
+        osgjsTexture.setWrapT(sampler.wrapT !== undefined ? sampler.wrapT : Texture.REPEAT);
 
         if (image.osgjsImage) {
             var format = ReaderWriterGLTF.TEXTURE_FORMAT[texture.format];
@@ -775,6 +790,25 @@ ReaderWriterGLTF.prototype = {
         }
     },
 
+    // Creates the stacked transforms of an animated node, in the glTF order translation, rotation and scale, with
+    // the node values as default values. Also the transforms of components that are not animated are needed, since
+    // they replace the node matrix, and the default values are used until an animation is played.
+    _createStackedTransforms: function(node, updateCallback) {
+        var stackTransforms = updateCallback.getStackedTransforms();
+        if (node.matrix) {
+            // Animated nodes may not have a matrix, so only the animated components are known
+            var animationTypes = this._nodeAnimationTypes[this._gltfJSON.nodes.indexOf(node)];
+            for (var channelType in animationTypes) {
+                var StackedType = ReaderWriterGLTF.TYPE_STACKED_TRANSFORMS[channelType];
+                stackTransforms.push(new StackedType(channelType));
+            }
+            return;
+        }
+        stackTransforms.push(new StackedTranslate('translation', node.translation || vec3.ZERO));
+        stackTransforms.push(new StackedQuaternion('rotation', node.rotation || quat.create()));
+        stackTransforms.push(new StackedScale('scale', node.scale || vec3.ONE));
+    },
+
     _createBone: function(nodeID) {
         var nodes = this._gltfJSON.nodes;
         var node = nodes[nodeID];
@@ -792,14 +826,7 @@ ReaderWriterGLTF.prototype = {
         updateCallback.setName(osgjsNode.getName());
         osgjsNode.addUpdateCallback(updateCallback);
 
-        if (nodeAnimationTypes[nodeID]) {
-            var stackTransforms = updateCallback.getStackedTransforms();
-            for (var channelType in nodeAnimationTypes[nodeID]) {
-                var StackedType = ReaderWriterGLTF.TYPE_STACKED_TRANSFORMS[channelType];
-                var stack = new StackedType(channelType);
-                stackTransforms.push(stack);
-            }
-        }
+        if (nodeAnimationTypes[nodeID]) this._createStackedTransforms(node, updateCallback);
 
         // we set the default updateBone matrix with the bone matrix to avoid to copy identity
         // matrix when no animation is yet started
@@ -826,12 +853,7 @@ ReaderWriterGLTF.prototype = {
             osgjsNode.addUpdateCallback(updateCallback);
             updateCallback.setMatrix(matrix);
 
-            var stackTransforms = updateCallback.getStackedTransforms();
-            for (var channelType in nodeAnimationTypes[nodeID]) {
-                var StackedType = ReaderWriterGLTF.TYPE_STACKED_TRANSFORMS[channelType];
-                var stack = new StackedType(channelType);
-                stackTransforms.push(stack);
-            }
+            this._createStackedTransforms(node, updateCallback);
         }
 
         return osgjsNode;
@@ -893,6 +915,7 @@ ReaderWriterGLTF.prototype = {
         var meshes = this._gltfJSON.meshes;
 
         var osgjsAnimations = [];
+        var usedAnimationNames = {};
         for (var i = 0; i < animations.length; i++) {
             var channels = animations[i].channels;
             var samplers = animations[i].samplers;
@@ -935,7 +958,11 @@ ReaderWriterGLTF.prototype = {
                 nodeAnimationTypes[nodeIndex][channelName] = true;
             }
 
-            var animationName = 'animation-' + i.toString();
+            // The glTF name, unless missing or already used by another animation
+            var animationName = animations[i].name;
+            if (!animationName || usedAnimationNames[animationName])
+                animationName = 'animation-' + i.toString();
+            usedAnimationNames[animationName] = true;
             osgjsAnimations.push(animationFactory.createAnimation(osgjsChannels, animationName));
         }
 

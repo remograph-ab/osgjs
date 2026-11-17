@@ -8,6 +8,7 @@ import { mat4 } from 'osg/glMatrix';
 import PooledResource from 'osg/PooledResource';
 import ComputeMatrixFromNodePath from 'osg/computeMatrixFromNodePath';
 import TransformEnums from 'osg/transformEnums';
+import CopyOp from 'osg/CopyOp';
 
 /**
  *  Node that can contains child node
@@ -50,6 +51,60 @@ var nodeGetMat = function() {
 utils.createPrototypeNode(
     Node,
     utils.objectInherit(Object.prototype, {
+        /**
+         * Clones this node and its subgraph, see CopyOp for what is shared and what is copied.
+         * Node types implement cloning by overriding _copyFrom.
+         * @param { CopyOp } [copyOp] The copy operation, by default a new CopyOp with default options.
+         * @returns { Node } The cloned node.
+         */
+        clone: function(copyOp) {
+            if (copyOp === undefined) copyOp = new CopyOp();
+            var copy = this.cloneType();
+            copyOp.registerCopy(this, copy);
+            copy._copyFrom(this, copyOp);
+            return copy;
+        },
+
+        /**
+         * Returns whether this node is shared instead of cloned when cloning a subgraph containing it.
+         * @param { CopyOp } copyOp The copy operation.
+         * @returns { boolean } True to share the node.
+         * @protected
+         */
+        _isSharedInCopy: function(/*copyOp*/) {
+            return false;
+        },
+
+        /**
+         * Copies the contents of a node of the same type into this newly created node, recursively cloning the
+         * children. Each node class overrides this function, calling the parent class implementation first, and then
+         * copying its own members, including per-child members, since the children are added with Node.addChild.
+         * @param { Node } node The source node.
+         * @param { CopyOp } copyOp The copy operation.
+         * @protected
+         */
+        _copyFrom: function(node, copyOp) {
+            this.setName(node.getName());
+            this.setUserData(node.getUserData());
+            this.setNodeMask(node.getNodeMask());
+            this.setStateSet(copyOp.copyStateSet(node.getStateSet()));
+            this.setCullCallback(node.getCullCallback());
+            this.setCullingActive(node.getCullingActive());
+            this._computeBoundingBoxCallback = node._computeBoundingBoxCallback;
+            this._computeBoundingSphereCallback = node._computeBoundingSphereCallback;
+
+            // Replace any update callbacks added by the constructor with copies of the source callbacks
+            var callbacks = this._updateCallbacks.slice();
+            for (var c = 0; c < callbacks.length; c++) this.removeUpdateCallback(callbacks[c]);
+            var sourceCallbacks = node.getUpdateCallbackList();
+            for (var s = 0; s < sourceCallbacks.length; s++)
+                this.addUpdateCallback(copyOp.cloneCallback(sourceCallbacks[s]));
+
+            var children = node.getChildren();
+            for (var i = 0; i < children.length; i++)
+                Node.prototype.addChild.call(this, copyOp.cloneNode(children[i]));
+        },
+
         /**
       Return StateSet and create it if it does not exist yet
       @type StateSet

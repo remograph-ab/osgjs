@@ -63,6 +63,11 @@ var UpdateSkeleton = function() {
 utils.createPrototypeObject(
     UpdateSkeleton,
     utils.objectInherit(Object.prototype, {
+        clone: function(/*copyOp*/) {
+            // Validates and sorts the bones of the copied skeleton on its first update
+            return new UpdateSkeleton();
+        },
+
         needToValidate: function() {
             return this._needValidate;
         },

@@ -17,6 +17,11 @@ var Transform = function() {
 utils.createPrototypeNode(
     Transform,
     utils.objectInherit(Node.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Node.prototype._copyFrom.call(this, node, copyOp);
+            this.referenceFrame = node.referenceFrame;
+        },
+
         setReferenceFrame: function(value) {
             this.referenceFrame = value;
         },

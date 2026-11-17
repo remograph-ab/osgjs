@@ -191,6 +191,11 @@ ComposerPostProcess.FragmentShader = [
 utils.createPrototypeObject(
     ComposerPostProcess,
     utils.objectInherit(Node.prototype, {
+        _copyFrom: function(/*node, copyOp*/) {
+            // The composer builds cameras, textures and programs for its viewer
+            throw new Error('osgUtil.ComposerPostProcess cannot be cloned');
+        },
+
         clear: function() {
             this._textures = {};
             this._internalPasses.length = 0;

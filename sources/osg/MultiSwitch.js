@@ -24,6 +24,16 @@ var MultiSwitch = function() {
 utils.createPrototypeNode(
     MultiSwitch,
     utils.objectInherit(Node.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Node.prototype._copyFrom.call(this, node, copyOp);
+            this._newChildDefaultValue = node._newChildDefaultValue;
+            this._activeSwitchSet = node._activeSwitchSet;
+            this._values = node._values.map(function(values) {
+                return values.slice();
+            });
+            this._valueNames = node._valueNames.slice();
+        },
+
         setNewChildDefaultValue: function(value) {
             this._newChildDefaultValue = value;
         },

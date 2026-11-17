@@ -81,6 +81,43 @@ export default function() {
         );
     });
 
+    test('BasicAnimationManager stops animations not yet started', function() {
+        var first = mockup.createAnimation('First');
+        var second = mockup.createAnimation('Second');
+        var cbMap = mockup.createAnimationUpdateCallback([first, second]);
+
+        var basicAnimationManager = new BasicAnimationManager();
+        basicAnimationManager.init([first, second]);
+        basicAnimationManager._animationsUpdateCallback = cbMap;
+        basicAnimationManager._registerTargetFoundInAnimationCallback();
+        basicAnimationManager._registerAnimations();
+        basicAnimationManager._dirty = false;
+
+        var nv = {
+            getFrameStamp: function() {
+                return {
+                    getSimulationTime: function() {
+                        return 0.0;
+                    }
+                };
+            }
+        };
+
+        // Switching animations before the next update only starts the last one
+        basicAnimationManager.playAnimation('First', true);
+        basicAnimationManager.stopAllAnimation();
+        basicAnimationManager.playAnimation('Second', true);
+        basicAnimationManager.update(null, nv);
+        assert.isNotOk(basicAnimationManager.isPlaying('First'), 'check stopped before started');
+        assert.isOk(basicAnimationManager.isPlaying('Second'), 'check last one playing');
+
+        basicAnimationManager.playAnimation('First', true);
+        basicAnimationManager.stopAnimation('First');
+        basicAnimationManager.update(null, nv);
+        assert.isNotOk(basicAnimationManager.isPlaying('First'), 'check stopped by name before started');
+        assert.isOk(basicAnimationManager.isPlaying('Second'), 'check other one still playing');
+    });
+
     test('BasicAnimationManager Linking', function() {
         var animation = mockup.createAnimation('AnimationTest', 'testUpdateMatrixTransform');
         var basicAnimationManager = new BasicAnimationManager();

@@ -236,6 +236,24 @@ var LightPointNode = function() {
 utils.createPrototypeNode(
     LightPointNode,
     utils.objectInherit(Node.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Node.prototype._copyFrom.call(this, node, copyOp);
+            this._lightPointList = node._lightPointList.map(function(point) {
+                return point.clone(copyOp);
+            });
+            this._dirtyLightPoints = true;
+            this._minPixelSize = node._minPixelSize;
+            this._maxPixelSize = node._maxPixelSize;
+            this._maxVisibleDistance2 = node._maxVisibleDistance2;
+            this._pointSprite = node._pointSprite;
+            // Light point data is copied, so that it can be changed per copy, but kept shared within the copy
+            this._lightPointSystem = copyOp.copyData(node._lightPointSystem);
+            this._simulationTime = node._simulationTime;
+            this._simulationInterval = node._simulationInterval;
+            this._lastSimulationTime = node._lastSimulationTime;
+            this._blinkColor = node._blinkColor.slice();
+        },
+
         addLightPoint: function(point) {
             if (!(point instanceof LightPoint)) throw new TypeError('Expected an osg.LightPoint');
             this._lightPointList.push(point);

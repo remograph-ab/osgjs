@@ -28,6 +28,18 @@ var funcWeights = function(a, b) {
 utils.createPrototypeObject(
     UpdateMorph,
     utils.objectInherit(AnimationUpdateCallback.prototype, {
+        clone: function(/*copyOp*/) {
+            // Finds the morph geometries below the copied node on its first update
+            var copy = new UpdateMorph();
+            copy.setName(this.getName());
+            for (var i = 0, l = this._targets.length; i < l; i++) {
+                if (this._targets[i] === undefined) continue;
+                copy.addTarget(this._targetNames[i], i);
+                copy._targets[i].value = this._targets[i].value;
+            }
+            return copy;
+        },
+
         _initNode: function(geom) {
             var morph;
             if (geom instanceof MorphGeometry) {

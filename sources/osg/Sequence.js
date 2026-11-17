@@ -53,6 +53,31 @@ Sequence.RESUME = 3;
 utils.createPrototypeNode(
     Sequence,
     utils.objectInherit(Node.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Node.prototype._copyFrom.call(this, node, copyOp);
+            // Copies the playback state too, so a copy of a running sequence continues from the same frame
+            this._value = node._value;
+            this._now = node._now;
+            this._start = node._start;
+            this._frameTime = node._frameTime.slice();
+            this._totalTime = node._totalTime;
+            this._resetTotalTime = node._resetTotalTime;
+            this._loopMode = node._loopMode;
+            this._begin = node._begin;
+            this._end = node._end;
+            this._speed = node._speed;
+            this._nreps = node._nreps;
+            this._nrepsRemain = node._nrepsRemain;
+            this._step = node._step;
+            this._defaultTime = node._defaultTime;
+            this._lastFrameTime = node._lastFrameTime;
+            this._saveRealLastFrameTime = node._saveRealLastFrameTime;
+            this._saveRealLastFrameValue = node._saveRealLastFrameValue;
+            this._mode = node._mode;
+            this._sync = node._sync;
+            this._clearOnStop = node._clearOnStop;
+        },
+
         addChild: function(child, time) {
             return this.insertChild(this.children.length, child, time);
         },

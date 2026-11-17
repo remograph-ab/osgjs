@@ -10,6 +10,11 @@ var Projection = function() {
 utils.createPrototypeNode(
     Projection,
     utils.objectInherit(Node.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Node.prototype._copyFrom.call(this, node, copyOp);
+            this.projection = mat4.copy(mat4.create(), node.projection);
+        },
+
         getProjectionMatrix: function() {
             return this.projection;
         },

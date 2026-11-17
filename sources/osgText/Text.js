@@ -144,6 +144,29 @@ utils.createPrototypeNode(
             this.dirtyBound();
         },
 
+        _copyFrom: function(node, copyOp) {
+            AutoTransform.prototype._copyFrom.call(this, node, copyOp);
+            // The text quad and texture are generated per text, so the cloned ones are replaced by drawing the text again
+            var clonedTransform = copyOp.getCopy(node._matrixTransform);
+            if (clonedTransform !== undefined) this.removeChild(clonedTransform);
+            this._matrixTransform.setMatrix(
+                mat4.copy(mat4.create(), node._matrixTransform.getMatrix())
+            );
+            this._text = node._text;
+            this._font = node._font;
+            this._color = node._color.slice();
+            this._fillStyle = node._fillStyle;
+            this._characterSize = node._characterSize;
+            this._characterSizeMode = node._characterSizeMode;
+            this._fontSize = node._fontSize;
+            this._position = node._position.slice();
+            this._layout = node._layout;
+            this._alignment = node._alignment;
+            this._forcePowerOfTwo = node._forcePowerOfTwo;
+            this.drawText();
+            this._dirty = false;
+        },
+
         setText: function(text) {
             this._text = text;
             // Canvas size could change so we need to make it dirty.

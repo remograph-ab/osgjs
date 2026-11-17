@@ -12,6 +12,13 @@ var StackedMatrix = function(name, matrix) {
 utils.createPrototypeObject(
     StackedMatrix,
     utils.objectInherit(Object.prototype, {
+        clone: function(/*copyOp*/) {
+            var copy = this.cloneType();
+            copy.setName(this.getName());
+            copy._target = Target.copyTarget(this._target);
+            return copy;
+        },
+
         init: function(matrix) {
             this.setMatrix(matrix);
             mat4.copy(this._target.defaultValue, matrix);

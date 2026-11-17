@@ -62,6 +62,9 @@ var BasicAnimationManager = function() {
     // contains a map with instance animations
     this._instanceAnimations = {};
 
+    // the animations added, to create the instance animations of a clone
+    this._sourceAnimations = [];
+
     // animations to start
     this._startAnimations = {};
 
@@ -126,6 +129,41 @@ var BasicAnimationManager = function() {
 utils.createPrototypeObject(
     BasicAnimationManager,
     utils.objectInherit(BaseObject.prototype, {
+        /**
+         * Clones this manager for a cloned scene graph, sharing the animations but with its own instances, targets
+         * and time, so that the copy is animated independently. Playing animations are started again in the copy.
+         * The copy binds to the animation update callbacks below the node it is set on, on its first update.
+         * @returns { BasicAnimationManager } The copy.
+         */
+        clone: function(/*copyOp*/) {
+            var copy = new BasicAnimationManager();
+            copy.setName(this.getName());
+            copy.init(this._sourceAnimations.slice());
+            copy.setTimeFactor(this._timeFactor);
+
+            var name;
+            for (name in this._instanceAnimations) {
+                var instance = this._instanceAnimations[name];
+                if (instance.originalDuration !== undefined) {
+                    copy._instanceAnimations[name].originalDuration = instance.originalDuration;
+                    copy._instanceAnimations[name].duration = instance.duration;
+                }
+            }
+
+            var play = function(animation) {
+                copy.playAnimationObject({
+                    name: animation.name,
+                    priority: animation.priority,
+                    weight: animation.weight,
+                    loop: animation.loop
+                });
+            };
+            this._activeAnimationList.forEach(play);
+            for (name in this._startAnimations) play(this._startAnimations[name]);
+            if (this._pause) copy.togglePause();
+            return copy;
+        },
+
         init: function(animations) {
             // reset all
             this._simulationTime = 0.0;
@@ -135,6 +173,7 @@ utils.createPrototypeObject(
 
             // contains a map with instance animations
             this._instanceAnimations = {};
+            this._sourceAnimations = [];
 
             // animations to start
             this._startAnimations = {};
@@ -242,6 +281,8 @@ utils.createPrototypeObject(
         },
 
         stopAnimation: function(name) {
+            // Also an animation that would start on the next update
+            delete this._startAnimations[name];
             var activeAnimationList = this._activeAnimationList;
             for (var i = 0, nbAnim = activeAnimationList.length; i < nbAnim; ++i) {
                 if (activeAnimationList[i].name === name) {
@@ -254,6 +295,8 @@ utils.createPrototypeObject(
         },
 
         stopAllAnimation: function() {
+            // Also the animations that would start on the next update
+            this._startAnimations = {};
             var activeAnimationList = this._activeAnimationList;
             for (var i = 0, nbAnim = activeAnimationList.length; i < nbAnim; ++i) {
                 var name = activeAnimationList[i].name;
@@ -461,6 +504,7 @@ utils.createPrototypeObject(
 
                 var instanceAnimation = Animation.createInstanceAnimation(animation);
                 this._instanceAnimations[animationName] = instanceAnimation;
+                this._sourceAnimations.push(animation);
                 instanceAnimationList.push(instanceAnimation);
             }
 

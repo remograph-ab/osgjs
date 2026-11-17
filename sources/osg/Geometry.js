@@ -48,10 +48,49 @@ var Geometry = function() {
 
 Geometry.enableVAO = true;
 
+/**
+ * Returns a new vertex attribute list sharing the buffer arrays of another one, with new proxies for proxied arrays,
+ * since proxies are switched per geometry, e.g. by morphing.
+ * @param { object } attributes The vertex attribute list.
+ * @returns { object } The copy.
+ */
+Geometry.copyVertexAttributeList = function(attributes) {
+    var copy = {};
+    var keys = window.Object.keys(attributes);
+    for (var i = 0; i < keys.length; i++) {
+        var attribute = attributes[keys[i]];
+        if (attribute instanceof BufferArrayProxy) {
+            var proxy = new BufferArrayProxy();
+            proxy.setInitialBufferArray(attribute.getInitialBufferArray());
+            proxy.setBufferArray(attribute.getBufferArray());
+            attribute = proxy;
+        }
+        copy[keys[i]] = attribute;
+    }
+    return copy;
+};
+
 /** @lends Geometry.prototype */
 utils.createPrototypeNode(
     Geometry,
     utils.objectInherit(Node.prototype, {
+        _isSharedInCopy: function(copyOp) {
+            return copyOp.getShareGeometries();
+        },
+
+        _copyFrom: function(node, copyOp) {
+            Node.prototype._copyFrom.call(this, node, copyOp);
+            // Buffers, primitives and the kd-tree are shared, while draw call and VAO caches are per geometry
+            this._attributes = Geometry.copyVertexAttributeList(node._attributes);
+            this._primitives = node._primitives.slice();
+            this._useVAO = node._useVAO;
+            this._shape = node._shape;
+            if (node._instancedArrayMap !== undefined)
+                this._instancedArrayMap = new window.Map(node._instancedArrayMap);
+            this._controlledNearFar = node._controlledNearFar;
+            this._controlledNearFarProjectionMatrix = node._controlledNearFarProjectionMatrix;
+        },
+
         releaseGLObjects: function() {
             if (this.stateset !== undefined) this.stateset.releaseGLObjects();
 

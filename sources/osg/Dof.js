@@ -131,6 +131,33 @@ Dof.TRANSLATE_INCREASING_BITS = TRANSLATE_BITS.map(function(bits) {
 utils.createPrototypeNode(
     Dof,
     utils.objectInherit(Transform.prototype, {
+        _copyFrom: function(node, copyOp) {
+            Transform.prototype._copyFrom.call(this, node, copyOp);
+            this._minHPR = node._minHPR.slice();
+            this._maxHPR = node._maxHPR.slice();
+            this._currentHPR = node._currentHPR.slice();
+            this._incrementHPR = node._incrementHPR.slice();
+            this._minTranslate = node._minTranslate.slice();
+            this._maxTranslate = node._maxTranslate.slice();
+            this._currentTranslate = node._currentTranslate.slice();
+            this._incrementTranslate = node._incrementTranslate.slice();
+            this._minScale = node._minScale.slice();
+            this._maxScale = node._maxScale.slice();
+            this._currentScale = node._currentScale.slice();
+            this._incrementScale = node._incrementScale.slice();
+            this._putMatrix = node._putMatrix.slice();
+            this._inversePutMatrix = node._inversePutMatrix.slice();
+            this._limitationFlags = node._limitationFlags;
+            this._increasingFlags = node._increasingFlags;
+            this._multOrder = node._multOrder;
+            // Also requires update traversal when animated
+            this.setAnimationOn(node._animationOn);
+            this._previousFrameNumber = node._previousFrameNumber;
+            this._previousTime = node._previousTime;
+            this.matrix = node.matrix.slice();
+            this._matrixDirty = node._matrixDirty;
+        },
+
         setMinHPR: function(hpr) {
             setVec3(this._minHPR, hpr, 'MinHPR');
         },

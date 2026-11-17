@@ -45,6 +45,15 @@ var createFloatTarget = function(defaultValue) {
     return createTarget(channelType.Float, defaultValue, defaultValue);
 };
 
+// copy of a target with the same type and values, but no channels or id, for a cloned animation update callback
+var copyTarget = function(source) {
+    var copyValue = function(value) {
+        return typeof value === 'number' ? value : value.slice();
+    };
+    return createTarget(source.type, copyValue(source.value), copyValue(source.defaultValue));
+};
+
+target.copyTarget = copyTarget;
 target.createQuatTarget = createQuatTarget;
 target.createVec3Target = createVec3Target;
 target.createFloatTarget = createFloatTarget;

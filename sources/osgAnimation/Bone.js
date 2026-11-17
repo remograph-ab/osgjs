@@ -10,9 +10,10 @@ import UpdateBone from 'osgAnimation/UpdateBone';
  *  @class Bone
  */
 var Bone = function(name) {
+    MatrixTransform.call(this);
+    // After the base constructor, which resets the name
     if (name !== undefined) this.setName(name);
 
-    MatrixTransform.call(this);
     this._invBindInSkeletonSpace = mat4.create();
     this._boneInSkeletonSpace = mat4.create();
     this._boneBoundingBox = new BoundingBox();
@@ -21,6 +22,14 @@ var Bone = function(name) {
 utils.createPrototypeNode(
     Bone,
     utils.objectInherit(MatrixTransform.prototype, {
+        _copyFrom: function(node, copyOp) {
+            MatrixTransform.prototype._copyFrom.call(this, node, copyOp);
+            mat4.copy(this._invBindInSkeletonSpace, node._invBindInSkeletonSpace);
+            mat4.copy(this._boneInSkeletonSpace, node._boneInSkeletonSpace);
+            this._boneBoundingBox.setMin(node._boneBoundingBox.getMin());
+            this._boneBoundingBox.setMax(node._boneBoundingBox.getMax());
+        },
+
         // consistent color depending of id
         // _rand: function ( id ) {
         //     var x = Math.sin( id * 45.233 ) * 43758.5453;
