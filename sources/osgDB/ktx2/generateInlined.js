@@ -65,7 +65,7 @@ var output = [
 
 fs.writeFileSync(OUTPUT_FILE, output);
 
-console.log(
+console.info(
     'Wrote ' +
         OUTPUT_FILE +
         ' (' +

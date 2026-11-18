@@ -57,6 +57,8 @@ var ReaderWriterGLTF = function() {
 };
 
 function base64ToArrayBuffer(base64) {
+    // A data URI has its base64 data after the comma
+    if (base64.substr(0, 5) === 'data:') base64 = base64.substr(base64.indexOf(',') + 1);
     var binary_string = window.atob(base64);
     var len = binary_string.length;
     var bytes = new Uint8Array(len);
@@ -65,6 +67,45 @@ function base64ToArrayBuffer(base64) {
     }
     return bytes.buffer;
 }
+
+// Binary glTF (.glb): a 12 byte header with magic, version and length, followed by chunks with length and type
+ReaderWriterGLTF.GLB_MAGIC = 0x46546c67; // 'glTF'
+ReaderWriterGLTF.GLB_CHUNK_JSON = 0x4e4f534a; // 'JSON'
+ReaderWriterGLTF.GLB_CHUNK_BIN = 0x004e4942; // 'BIN\0'
+
+ReaderWriterGLTF.isGLB = function(arrayBuffer) {
+    return (
+        arrayBuffer instanceof ArrayBuffer &&
+        arrayBuffer.byteLength >= 12 &&
+        new DataView(arrayBuffer).getUint32(0, true) === ReaderWriterGLTF.GLB_MAGIC
+    );
+};
+
+// Returns the glTF JSON object and the binary chunk (or undefined) of a binary glTF file
+ReaderWriterGLTF.parseGLB = function(arrayBuffer) {
+    if (!ReaderWriterGLTF.isGLB(arrayBuffer)) throw new Error('Not a binary glTF (.glb) file');
+    var view = new DataView(arrayBuffer);
+    var version = view.getUint32(4, true);
+    if (version !== 2) throw new Error('Unsupported binary glTF version ' + version);
+    var length = Math.min(view.getUint32(8, true), arrayBuffer.byteLength);
+    var json;
+    var binary;
+    for (var offset = 12; offset + 8 <= length; ) {
+        var chunkLength = view.getUint32(offset, true);
+        var chunkType = view.getUint32(offset + 4, true);
+        var start = offset + 8;
+        if (start + chunkLength > length) throw new Error('Truncated binary glTF chunk');
+        if (chunkType === ReaderWriterGLTF.GLB_CHUNK_JSON && json === undefined) {
+            json = JSON.parse(new window.TextDecoder('utf-8').decode(new Uint8Array(arrayBuffer, start, chunkLength)));
+        } else if (chunkType === ReaderWriterGLTF.GLB_CHUNK_BIN && binary === undefined) {
+            binary = arrayBuffer.slice(start, start + chunkLength);
+        }
+        // Chunks are padded to 4 bytes, unknown chunk types are skipped
+        offset = start + chunkLength;
+    }
+    if (json === undefined) throw new Error('Binary glTF file without a JSON chunk');
+    return { json: json, binary: binary };
+};
 
 ReaderWriterGLTF.WEBGL_COMPONENT_TYPES = {
     5120: Int8Array,
@@ -172,6 +213,9 @@ ReaderWriterGLTF.prototype = {
         this._skeletonToInfluenceMap = {};
         this._stateSetMap = {};
         this._filesMap = {};
+        // The binary chunk of a .glb file, used by the buffer without uri
+        this._glbBinary = undefined;
+        this._buffersPromise = undefined;
         this._inputReader = new Input();
         this._rootStateSet = new StateSet();
 
@@ -218,18 +262,26 @@ ReaderWriterGLTF.prototype = {
         for (var i = 0; i < buffers.length; i++) {
             var buffer = buffers[i];
             var absoluteUri = buffer.uri;
-            if (absoluteUri.indexOf('http') === -1) {
+            if (absoluteUri === undefined) {
+                // The binary chunk of a .glb file
+                if (this._glbBinary === undefined) {
+                    return P.reject(new Error('glTF buffer ' + i + ' has no uri and there is no binary chunk'));
+                }
+                buffer.data = this._glbBinary;
+                continue;
+            }
+            if (absoluteUri.substr(0, 5) !== 'data:' && absoluteUri.indexOf('http') === -1) {
                 var index = this._url.lastIndexOf('/');
                 if (index > -1) {
                     absoluteUri = this._url.substr(0, index + 1) + absoluteUri;
                 }
             }
             promises.push(
-                this.loadURI(absoluteUri, { responseType: 'arraybuffer' }).then(function(
-                    arrayBuffer
-                ) {
-                    buffer.data = arrayBuffer;
-                })
+                this.loadURI(absoluteUri, { responseType: 'arraybuffer' }).then(
+                    function(arrayBuffer) {
+                        this.data = arrayBuffer;
+                    }.bind(buffer)
+                )
             );
         }
         return P.all(promises);
@@ -534,14 +586,22 @@ ReaderWriterGLTF.prototype = {
 
         for (var i = 0; i < images.length; i++) {
             var image = images[i];
-            var url = window.decodeURI(image.uri);
             var promise;
-            if (url.substr(0, 5) === 'data:' || this._filesMap[url] !== undefined) {
-                promise = this.loadURI(url);
+            if (image.uri === undefined) {
+                // An image in a buffer view, e.g. in the binary chunk of a .glb file, decoded by the browser
+                promise = this._loadBufferViewImage(image);
+            } else if (image.uri.substr(0, 5) === 'data:') {
+                // Inline image data, decoded by the browser like an image file
+                promise = fileHelper.createImageFromURL(image.uri);
             } else {
-                // An image file relative to the glTF file, like buffers
-                if (url.indexOf('http') === -1) url = this._localPath + url;
-                promise = fileHelper.requestResource(url);
+                var url = window.decodeURI(image.uri);
+                if (this._filesMap[url] !== undefined) {
+                    promise = this.loadURI(url);
+                } else {
+                    // An image file relative to the glTF file, like buffers
+                    if (url.indexOf('http') === -1) url = this._localPath + url;
+                    promise = fileHelper.requestResource(url);
+                }
             }
             promise = promise.then(
                 function(imageData) {
@@ -553,6 +613,24 @@ ReaderWriterGLTF.prototype = {
             promises.push(promise);
         }
         return P.all(promises);
+    },
+
+    // Returns a promise of the browser image decoded from the buffer view of a glTF image, once the buffers are loaded
+    _loadBufferViewImage: function(image) {
+        var bufferView = this._gltfJSON.bufferViews && this._gltfJSON.bufferViews[image.bufferView];
+        if (bufferView === undefined) {
+            return P.reject(new Error('glTF image without uri or valid bufferView'));
+        }
+        var buffersPromise = this._buffersPromise || this.loadBuffers();
+        return buffersPromise.then(
+            function() {
+                var buffer = this._gltfJSON.buffers[bufferView.buffer];
+                var byteOffset = bufferView.byteOffset || 0;
+                var bytes = new Uint8Array(buffer.data, byteOffset, bufferView.byteLength);
+                var blob = new window.Blob([bytes], { type: image.mimeType || 'image/png' });
+                return fileHelper.createImageFromBlob(blob);
+            }.bind(this)
+        );
     },
 
     _texture: function(gltfTexture) {
@@ -993,16 +1071,29 @@ ReaderWriterGLTF.prototype = {
             // So we already have all the files.
             this._filesMap = options.filesMap;
             var glTFFile = this._filesMap[url];
+            if (ReaderWriterGLTF.isGLB(glTFFile)) return this.readGLB(glTFFile, url);
             return this.readJSON(glTFFile, url);
         }
 
         var index = url.lastIndexOf('/');
         this._localPath = index === -1 ? '' : url.substr(0, index + 1);
-        // Else it is a usual XHR request
+        // Else it is a usual XHR request, binary for .glb files
+        if (/\.glb$/i.test(url.split(/[?#]/)[0])) {
+            return fileHelper.requestURI(url, { responseType: 'arraybuffer' }).then(function(file) {
+                return self.readGLB(file, url);
+            });
+        }
         return fileHelper.requestURI(url).then(function(file) {
             return self.readJSON(file);
         });
     },
+
+    // Reads a binary glTF (.glb) file, whose buffer without uri is the binary chunk
+    readGLB: P.method(function(arrayBuffer, url) {
+        var glb = ReaderWriterGLTF.parseGLB(arrayBuffer);
+        this._glbBinary = glb.binary;
+        return this.readJSON(glb.json, url);
+    }),
 
     readJSON: P.method(function(json, url) {
         if (typeof json === 'string') {
@@ -1012,7 +1103,8 @@ ReaderWriterGLTF.prototype = {
             this._gltfJSON = json;
         }
 
-        return P.all([this.loadBuffers(), this.loadImages()]).then(
+        this._buffersPromise = this.loadBuffers();
+        return P.all([this._buffersPromise, this.loadImages()]).then(
             function() {
                 this.loadBufferViews();
                 this.loadAccessors();
@@ -1036,5 +1128,6 @@ ReaderWriterGLTF.prototype = {
 };
 
 Registry.instance().addReaderWriter('gltf', new ReaderWriterGLTF());
+Registry.instance().addReaderWriter('glb', new ReaderWriterGLTF());
 
 export default ReaderWriterGLTF;
