@@ -3,6 +3,11 @@ import Lod from 'osg/Lod';
 import NodeVisitor from 'osg/NodeVisitor';
 import { mat4 } from 'osg/glMatrix';
 import { vec3 } from 'osg/glMatrix';
+import Program from 'osg/Program';
+import StateSet from 'osg/StateSet';
+import StateAttribute from 'osg/StateAttribute';
+import ColorMask from 'osg/ColorMask';
+import Depth from 'osg/Depth';
 
 /**
  *  PagedLOD that can contains paged child nodes
@@ -32,6 +37,33 @@ var PerRangeData = function() {
     this.frameNumber = 0;
     this.frameNumberOfLastTraversal = 0;
     this.dbrequest = undefined;
+    // True while a newly attached child waits for its shader programs, see setChildPending
+    this.pending = false;
+    // Frame number of the first probe traversal of a pending child, or -1
+    this.probeFrame = -1;
+    // Frame number when the pending state was last decided, so that all culls in a frame agree
+    this.decidedFrame = -1;
+};
+
+/**
+ * Number of frames after the first probe that a pending child is shown at the latest, even if
+ * programs are still compiling, in case something keeps compiling for a long time.
+ */
+PagedLOD.MAX_PENDING_FRAMES = 300;
+
+// State set for probing a pending child: culled and drawn like the real thing, so that its
+// shader programs are created (compiled in the background) and its textures uploaded, but
+// writing nothing. Neither attribute is part of a shader program hash, so the programs are
+// the same as when the child is drawn for real.
+var probeStateSet;
+var getProbeStateSet = function() {
+    if (!probeStateSet) {
+        probeStateSet = new StateSet();
+        var flags = StateAttribute.ON | StateAttribute.OVERRIDE;
+        probeStateSet.setAttributeAndModes(new ColorMask(false, false, false, false), flags);
+        probeStateSet.setAttributeAndModes(new Depth(Depth.NEVER, 0.0, 1.0, false), flags);
+    }
+    return probeStateSet;
 };
 
 /** @lends PagedLOD.prototype */
@@ -49,6 +81,8 @@ utils.createPrototypeNode(
                 data.timeStamp = source.timeStamp;
                 data.frameNumber = source.frameNumber;
                 data.frameNumberOfLastTraversal = source.frameNumberOfLastTraversal;
+                // A pending child in the source is probed again by the copy
+                data.pending = source.pending;
                 return data;
             });
             this._expiryTime = node._expiryTime;
@@ -129,6 +163,81 @@ utils.createPrototypeNode(
         getNumChildrenThatCannotBeExpired: function() {
             return this._numChildrenThatCannotBeExpired;
         },
+        /**
+         * Marks a child as pending, e.g. a paged child just attached. A pending child isn't
+         * shown until its shader programs have compiled: until then the closest coarser child
+         * is shown, while the pending one is culled and drawn writing nothing, which starts
+         * the compiles. Without this, the area would be empty while programs compile in the
+         * background (see Program.parallelCompile).
+         * @param { number } childNo The child number.
+         */
+        setChildPending: function(childNo) {
+            var data = this._perRangeDataList[childNo];
+            data.pending = true;
+            data.probeFrame = -1;
+            data.decidedFrame = -1;
+        },
+        isChildPending: function(childNo) {
+            return childNo < this._perRangeDataList.length && this._perRangeDataList[childNo].pending;
+        },
+        hasPendingChild: function() {
+            for (var i = 0; i < this.children.length && i < this._perRangeDataList.length; ++i) {
+                if (this._perRangeDataList[i].pending) return true;
+            }
+            return false;
+        },
+
+        // Decides once per frame whether a pending child is still pending, before culling it
+        _isStillPending: function(data, frameNumber) {
+            if (data.decidedFrame === frameNumber) return data.pending;
+            data.decidedFrame = frameNumber;
+            // The probe must have been drawn, which starts any compiles, in an earlier frame
+            if (
+                data.probeFrame >= 0 &&
+                frameNumber > data.probeFrame &&
+                (frameNumber - data.probeFrame > PagedLOD.MAX_PENDING_FRAMES ||
+                    !Program.hasPendingParallelCompile())
+            ) {
+                data.pending = false;
+            }
+            return data.pending;
+        },
+
+        // Traverses a child selected for the range, or, if it is pending, probes it and
+        // traverses the closest coarser child instead. Returns the mask of handled children.
+        _traverseChild: function(visitor, index, handledMask, updateTimeStamp) {
+            var data = this._perRangeDataList[index];
+            var isCull = visitor.getVisitorType() === NodeVisitor.CULL_VISITOR;
+            handledMask |= 1 << index;
+            if (data.pending) {
+                var frameNumber = visitor.getFrameStamp().getFrameNumber();
+                if (!isCull || this._isStillPending(data, frameNumber)) {
+                    if (isCull) {
+                        // Probe without paging: requests from the probed subgraph would load
+                        // deeper levels before this one is even shown
+                        var dbhandler = visitor.getDatabaseRequestHandler();
+                        visitor.setDatabaseRequestHandler(undefined);
+                        visitor.pushStateSet(getProbeStateSet());
+                        this.children[index].accept(visitor);
+                        visitor.popStateSet();
+                        visitor.setDatabaseRequestHandler(dbhandler);
+                        if (data.probeFrame < 0) data.probeFrame = frameNumber;
+                    }
+                    var coarser = index - 1;
+                    if (coarser >= 0 && !(handledMask & (1 << coarser))) {
+                        if (updateTimeStamp) {
+                            this._perRangeDataList[coarser].timeStamp = visitor.getFrameStamp().getSimulationTime();
+                            this._perRangeDataList[coarser].frameNumber = frameNumber;
+                        }
+                        handledMask = this._traverseChild(visitor, coarser, handledMask, updateTimeStamp);
+                    }
+                    return handledMask;
+                }
+            }
+            this.children[index].accept(visitor);
+            return handledMask;
+        },
+
         getDatabaseRequest: function(childNo) {
             return this._perRangeDataList[childNo].dbrequest;
         },
@@ -147,6 +256,7 @@ utils.createPrototypeNode(
                 removedChildren.push(this.children[i]);
                 this.removeChild(this.children[i]);
                 this._perRangeDataList[i].loaded = false;
+                this._perRangeDataList[i].pending = false;
                 if (this._perRangeDataList[i].dbrequest !== undefined) {
                     this._perRangeDataList[i].dbrequest._groupExpired = true;
                 }
@@ -239,7 +349,7 @@ utils.createPrototypeNode(
                         }
 
                         var needToLoadChild = false;
-                        var lastChildTraversed = -1;
+                        var handledMask = 0;
                         var dbhandler = visitor.getDatabaseRequestHandler();
                         for (var j = 0; j < this._range.length; ++j) {
                             if (
@@ -256,8 +366,9 @@ utils.createPrototypeNode(
                                         ].frameNumber = visitor.getFrameStamp().getFrameNumber();
                                     }
 
-                                    this.children[j].accept(visitor);
-                                    lastChildTraversed = j;
+                                    if (!(handledMask & (1 << j))) {
+                                        handledMask = this._traverseChild(visitor, j, handledMask, updateTimeStamp);
+                                    }
                                 } else {
                                     needToLoadChild = true;
                                 }
@@ -272,7 +383,7 @@ utils.createPrototypeNode(
 
                         if (needToLoadChild) {
                             var numChildren = this.children.length;
-                            if (numChildren > 0 && numChildren - 1 !== lastChildTraversed) {
+                            if (numChildren > 0 && !(handledMask & (1 << (numChildren - 1)))) {
                                 if (updateTimeStamp) {
                                     this._perRangeDataList[
                                         numChildren - 1
@@ -282,7 +393,7 @@ utils.createPrototypeNode(
                                     ].frameNumber = visitor.getFrameStamp().getFrameNumber();
                                 }
 
-                                this.children[numChildren - 1].accept(visitor);
+                                handledMask = this._traverseChild(visitor, numChildren - 1, handledMask, updateTimeStamp);
                             }
                             // now request the loading of the next unloaded child.
                             // Skip entirely when no DatabaseRequestHandler is set

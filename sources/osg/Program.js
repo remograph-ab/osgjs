@@ -92,6 +92,28 @@ Program._sDeletedGLProgramCache = new window.Map();
 // supported. Turn off while loading if pop-in is worse than a longer load.
 Program.parallelCompile = true;
 
+// Programs whose background compile was started and not yet reported done by the driver
+Program._sParallelCompiling = new window.Set();
+
+// Reports whether any program is still compiling in the background, e.g. so that a paged
+// tile isn't shown until the programs it needs can draw it. Programs the driver reports done
+// are dropped here; they are finished on their next use in ShaderGenerator.getOrCreateProgram.
+Program.hasPendingParallelCompile = function() {
+    var compiling = Program._sParallelCompiling;
+    if (compiling.size === 0) return false;
+    compiling.forEach(function(program) {
+        if (
+            !program.isParallelCompiling() ||
+            !program._program ||
+            program._gl.isContextLost() ||
+            program.isParallelCompileDone()
+        ) {
+            compiling.delete(program);
+        }
+    });
+    return compiling.size > 0;
+};
+
 // static method to delete Program
 Program.deleteGLProgram = function(gl, program) {
     if (!Program._sDeletedGLProgramCache.has(gl)) Program._sDeletedGLProgramCache.set(gl, []);
@@ -486,6 +508,7 @@ utils.createPrototypeStateAttribute(
                 this._glAttachAndLink(gl, this._program, this._vertex, this._fragment);
                 this._parallelExt = ext;
                 this._asyncCompilation = 1;
+                Program._sParallelCompiling.add(this);
                 return true;
             },
 
@@ -508,6 +531,7 @@ utils.createPrototypeStateAttribute(
                     this._program = null;
                 }
                 this._parallelExt = undefined;
+                Program._sParallelCompiling.delete(this);
                 this.getLinkResult(gl);
             },
 

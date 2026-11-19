@@ -76,6 +76,17 @@ export default function() {
             );
             assert.isOk(greyscale._textureObject !== undefined, 'texture object');
             assert.isOk(greyscale.isDirty() === false, 'dirty is false');
+
+            // Changed parameters are applied to the uploaded texture, which can't be uploaded again
+            var textureObject = greyscale._textureObject;
+            greyscale.setMaxAnisotropy(4.0);
+            greyscale.apply(state);
+            assert.isOk(
+                greyscale._textureObject === textureObject,
+                'texture object kept when changing parameters after releasing the image'
+            );
+            assert.isOk(greyscale.isDirty() === false, 'dirty is false after changing parameters');
+            assert.isOk(greyscale._image === undefined, 'image still released');
             done();
         };
         loadTexture('mockup/rgb24.png', Texture.RGB);
