@@ -48,6 +48,11 @@ var RigGeometry = function() {
     this._stateSetAnimation = new StateSet();
 
     this._needToComputeMatrix = true;
+
+    // Matrix from the space of the bind pose vertices to the space the skinned vertices are drawn in, if they differ,
+    // used for the bounding box. E.g. glTF bind pose vertices are in scene space, while the skeleton may be placed
+    // under scaled nodes, like a Mixamo armature scaled by 0.01, whose inverse bind matrices compensate for it.
+    this._bindPoseMatrix = undefined;
 };
 
 utils.createPrototypeNode(
@@ -63,6 +68,7 @@ utils.createPrototypeNode(
             // Skinning data is shared, while the skeleton and bones are found on the first update
             this._shape = node._shape;
             this._boneNameID = node._boneNameID;
+            this._bindPoseMatrix = node._bindPoseMatrix;
             var source = node._geometry;
             if (source instanceof MorphGeometry) {
                 // Use the vertex attributes of the copied morph geometry, which switches them per instance
@@ -175,7 +181,21 @@ utils.createPrototypeNode(
             // which is better than an empty one for culling and for framing the model
             if (!boundingBox.valid()) Geometry.prototype.computeBoundingBox.call(this, boundingBox);
 
+            if (this._bindPoseMatrix !== undefined && boundingBox.valid()) {
+                RigGeometry._transformBoundingBox(boundingBox, this._bindPoseMatrix);
+            }
+
             return boundingBox;
+        },
+
+        // Sets the matrix from the bind pose vertex space to the drawn space, see the constructor, or undefined if the same
+        setBindPoseMatrix: function(matrix) {
+            this._bindPoseMatrix = matrix;
+            this.dirtyBound();
+        },
+
+        getBindPoseMatrix: function() {
+            return this._bindPoseMatrix;
         },
 
         computeMatrixFromRootSkeleton: function() {
@@ -486,5 +506,23 @@ utils.createPrototypeNode(
     'osgAnimation',
     'RigGeometry'
 );
+
+// Replaces a bounding box with the box around its corners transformed by a matrix
+RigGeometry._transformBoundingBox = function(boundingBox, matrix) {
+    var corners = [];
+    var corner = vec3.create();
+    for (var i = 0; i < 8; i++) {
+        boundingBox.corner(i, corner);
+        vec3.transformMat4(corner, corner, matrix);
+        corners.push(vec3.clone(corner));
+    }
+    boundingBox.init();
+    var min = boundingBox.getMin();
+    var max = boundingBox.getMax();
+    for (var j = 0; j < 8; j++) {
+        vec3.min(min, min, corners[j]);
+        vec3.max(max, max, corners[j]);
+    }
+};
 
 export default RigGeometry;

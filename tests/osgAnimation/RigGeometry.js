@@ -3,6 +3,7 @@ import 'tests/mockup/mockup';
 import Geometry from 'osg/Geometry';
 import BufferArray from 'osg/BufferArray';
 import RigGeometry from 'osgAnimation/RigGeometry';
+import { mat4 } from 'osg/glMatrix';
 
 var createRig = function(weights) {
     var source = new Geometry();
@@ -37,5 +38,18 @@ export default function() {
         assert.isTrue(box.valid());
         assert.deepEqual(Array.from(box.getMin()), [0, 0, 0]);
         assert.deepEqual(Array.from(box.getMax()), [1, 2, 0]);
+    });
+
+    test('RigGeometry bounding box is transformed by the bind pose matrix', function() {
+        // E.g. a skeleton under an armature scaled by 0.01, whose skinned vertices are drawn scaled by 100
+        var rig = createRig([1, 0, 0, 0, 0.5, 0.5, 0, 0, 1, 0, 0, 0]);
+        rig.getBoundingBox();
+        rig.setBindPoseMatrix(mat4.fromScaling(mat4.create(), [100, 100, 100]));
+        var box = rig.getBoundingBox();
+        assert.deepEqual(Array.from(box.getMin()), [0, 0, 0]);
+        assert.deepEqual(Array.from(box.getMax()), [100, 200, 0]);
+
+        var copy = rig.clone();
+        assert.deepEqual(Array.from(copy.getBoundingBox().getMax()), [100, 200, 0], 'shared by clones');
     });
 }

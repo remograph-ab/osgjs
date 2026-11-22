@@ -29,6 +29,7 @@ import UpdateBone from 'osgAnimation/UpdateBone';
 import UpdateMorph from 'osgAnimation/UpdateMorph';
 import UpdateMatrixTransform from 'osgAnimation/UpdateMatrixTransform';
 import fileHelper from 'osgDB/fileHelper';
+import ComputeMatrixFromNodePath from 'osg/computeMatrixFromNodePath';
 
 import Uniform from 'osg/Uniform';
 import { mat4, vec3, quat } from 'osg/glMatrix';
@@ -418,6 +419,37 @@ ReaderWriterGLTF.prototype = {
 
         for (var i = 0; i < skins.length; i++) {
             this._processSkin(i);
+        }
+    },
+
+    // The bind pose vertices of a skinned mesh are in scene space, while its skeleton takes the place of the mesh node
+    // and may have scaled or rotated parents, e.g. a Mixamo armature scaled by 0.01, which the inverse bind matrices
+    // compensate for. So the skinned vertices are drawn transformed by the inverse of the parents' matrix, which the rig
+    // geometries need for their bounding boxes.
+    _setBindPoseMatrices: function() {
+        var skins = this._gltfJSON.skins;
+        if (!skins) return;
+        for (var i = 0; i < skins.length; i++) {
+            var skeleton = skins[i].osgjsNode;
+            if (!skeleton || skeleton.getParents().length === 0) continue;
+            var path = [];
+            var node = skeleton.getParents()[0];
+            while (node) {
+                path.unshift(node);
+                var parents = node.getParents();
+                node = parents.length > 0 ? parents[0] : undefined;
+            }
+            var parentsMatrix = mat4.create();
+            ComputeMatrixFromNodePath.computeLocalToWorld(path, true, parentsMatrix);
+            if (mat4.exactEquals(parentsMatrix, mat4.IDENTITY)) continue;
+            var bindPoseMatrix = mat4.invert(mat4.create(), parentsMatrix);
+            if (!bindPoseMatrix) continue;
+            var children = skeleton.getChildren();
+            for (var j = 0; j < children.length; j++) {
+                if (children[j] instanceof RigGeometry) {
+                    children[j].setBindPoseMatrix(bindPoseMatrix);
+                }
+            }
         }
     },
 
@@ -1060,9 +1092,16 @@ ReaderWriterGLTF.prototype = {
         return fileHelper.requestURI(uri, options);
     }),
 
+    // Reads a .gltf or .glb file. The reader registered for the extensions is shared, while a read keeps the state of
+    // its file on the reader until done, so each read uses a reader of its own, e.g. when several models load the same
+    // file at once. Sharing one mixed up their images, materials and animations.
     readNodeURL: function(url, options) {
+        return new ReaderWriterGLTF()._readNodeURL(url, options);
+    },
+
+    _readNodeURL: function(url, options) {
         this._url = url;
-      
+
         var self = this;
 
         this.init();
@@ -1115,6 +1154,7 @@ ReaderWriterGLTF.prototype = {
                 this.loadSkins();
                 this.loadNodes();
                 this.loadScenes();
+                this._setBindPoseMatrices();
 
                 var root = new MatrixTransform();
                 root.addChild(this._osgjsScene[0]);

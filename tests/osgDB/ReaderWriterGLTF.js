@@ -23,4 +23,27 @@ export default function() {
         assert.equal(unsampled.getMagFilter(), Texture.LINEAR, 'linear without a sampler');
         assert.equal(unsampled.getWrapS(), Texture.REPEAT, 'default wrap s');
     });
+
+    test('ReaderWriterGLTF concurrent reads with one reader', function() {
+        // The registered reader is shared, e.g. by several models loading the same file at once
+        var createJSON = function(name) {
+            return JSON.stringify({
+                asset: { version: '2.0' },
+                buffers: [],
+                bufferViews: [],
+                accessors: [],
+                materials: [],
+                meshes: [],
+                nodes: [{ name: name, translation: [1, 2, 3] }],
+                scenes: [{ nodes: [0] }]
+            });
+        };
+        var reader = new ReaderWriterGLTF();
+        var readA = reader.readNodeURL('a.gltf', { filesMap: { 'a.gltf': createJSON('A') } });
+        var readB = reader.readNodeURL('b.gltf', { filesMap: { 'b.gltf': createJSON('B') } });
+        return Promise.all([readA, readB]).then(function(roots) {
+            assert.equal(roots[0].getChildren()[0].getName(), 'A', 'first read keeps its file');
+            assert.equal(roots[1].getChildren()[0].getName(), 'B', 'second read keeps its file');
+        });
+    });
 }
