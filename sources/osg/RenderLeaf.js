@@ -1,4 +1,5 @@
 import StateGraph from 'osg/StateGraph';
+import State from 'osg/State';
 
 // just use inline function, it's faster than having the test in the code
 var applyUniformCache = [
@@ -16,7 +17,7 @@ var applyUniformCache = [
 
         if (matrixModelViewChanged) {
             var modelMatrix = state._modelMatrix;
-            modelMatrix.setMatrix4(model);
+            modelMatrix.setMatrix4(state.getModelMatrixToApply(model));
             modelMatrix.apply(gl, this.modelUniform);
         }
     },
@@ -29,7 +30,7 @@ var applyUniformCache = [
 
         if (matrixModelViewChanged) {
             var viewMatrix = state._viewMatrix;
-            viewMatrix.setMatrix4(view);
+            viewMatrix.setMatrix4(state.getViewMatrixToApply(view));
             viewMatrix.apply(gl, this.viewUniform);
         }
     },
@@ -42,11 +43,11 @@ var applyUniformCache = [
 
         if (matrixModelViewChanged) {
             var modelMatrix = state._modelMatrix;
-            modelMatrix.setMatrix4(model);
+            modelMatrix.setMatrix4(state.getModelMatrixToApply(model));
             modelMatrix.apply(gl, this.modelUniform);
 
             var viewMatrix = state._viewMatrix;
-            viewMatrix.setMatrix4(view);
+            viewMatrix.setMatrix4(state.getViewMatrixToApply(view));
             viewMatrix.apply(gl, this.viewUniform);
         }
     }
@@ -61,6 +62,15 @@ var CacheUniformApply = function(state, program) {
     if (this.viewUniform) cacheIndex |= 2;
 
     this.apply = applyUniformCache[cacheIndex];
+
+    // Texture coordinate shifts, set per geometry (see State.applyTexCoordShifts)
+    this.texCoordShiftUniforms = [];
+    for (var unit = 0; unit < State.MAX_TEXCOORD_SHIFT_UNITS; ++unit) {
+        var location = program._uniformsCache['uTexCoordShift' + unit];
+        if (location) {
+            this.texCoordShiftUniforms.push({ unit: unit, location: location, u: NaN, v: NaN });
+        }
+    }
 };
 
 var RenderLeaf = function() {
@@ -110,6 +120,9 @@ RenderLeaf.prototype = {
             }
 
             obj.apply(state, this._modelView, this._model, this._view, this._projection);
+            if (obj.texCoordShiftUniforms.length > 0) {
+                state.applyTexCoordShifts(obj.texCoordShiftUniforms, this._geometry, this._model);
+            }
 
             this._geometry.drawImplementation(state);
         };

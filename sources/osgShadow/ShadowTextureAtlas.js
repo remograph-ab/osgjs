@@ -170,7 +170,8 @@ utils.createPrototypeStateAttribute(
                     this._viewMatrices[lightNumber],
                     uniformMap['ViewRight_' + lightNumber],
                     uniformMap['ViewUp_' + lightNumber],
-                    uniformMap['ViewLook_' + lightNumber]
+                    uniformMap['ViewLook_' + lightNumber],
+                    state.getRenderOrigin()
                 );
 
                 uniformMap['Projection_' + lightNumber].setFloat3(this._projection[lightNumber]);

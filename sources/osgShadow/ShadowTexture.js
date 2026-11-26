@@ -114,26 +114,31 @@ utils.createPrototypeStateAttribute(
         },
 
         // optimize a mat4 into 3 vec4 unforms
-        _updateViewMatrixUniforms: function(viewMatrix, viewRight, viewUp, viewLook) {
+        // The receivers' world positions are relative to the render origin (see osg.State.setRenderOrigin),
+        // so the view matrix is multiplied with the translation to it, if given.
+        _updateViewMatrixUniforms: function(viewMatrix, viewRight, viewUp, viewLook, origin) {
             var v;
             var m = viewMatrix;
+            var ox = origin !== undefined ? origin[0] : 0.0;
+            var oy = origin !== undefined ? origin[1] : 0.0;
+            var oz = origin !== undefined ? origin[2] : 0.0;
             v = viewRight.getInternalArray();
             v[0] = m[0];
             v[1] = m[4];
             v[2] = m[8];
-            v[3] = m[12];
+            v[3] = m[0] * ox + m[4] * oy + m[8] * oz + m[12];
 
             v = viewUp.getInternalArray();
             v[0] = m[1];
             v[1] = m[5];
             v[2] = m[9];
-            v[3] = m[13];
+            v[3] = m[1] * ox + m[5] * oy + m[9] * oz + m[13];
 
             v = viewLook.getInternalArray();
             v[0] = m[2];
             v[1] = m[6];
             v[2] = m[10];
-            v[3] = m[14];
+            v[3] = m[2] * ox + m[6] * oy + m[10] * oz + m[14];
         },
 
         apply: function(state, texNumber) {
@@ -149,7 +154,8 @@ utils.createPrototypeStateAttribute(
                 this._viewMatrix,
                 uniformMap.ViewRight,
                 uniformMap.ViewUp,
-                uniformMap.ViewLook
+                uniformMap.ViewLook,
+                state.getRenderOrigin()
             );
             uniformMap.Projection.setFloat3(this._projection);
             uniformMap.DepthRange.setFloat2(this._depthRange);

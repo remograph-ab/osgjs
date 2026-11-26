@@ -1,5 +1,6 @@
 import notify from 'osg/notify';
 import { mat4 } from 'osg/glMatrix';
+import { vec3 } from 'osg/glMatrix';
 import Options from 'osg/Options';
 import P from 'bluebird';
 import Timer from 'osg/Timer';
@@ -59,6 +60,11 @@ var Viewer = function(canvas, userOptions, error) {
     this._options = options;
     this._contextLost = false;
     this._forceRestoreContext = true;
+
+    // Grid size in meters for moving the render origin with the camera, 0 for keeping it at the world origin
+    this._renderOriginGridSize = 0.0;
+    this._renderOriginCandidate = vec3.create();
+    this._renderOriginCallback = undefined;
     this.renderBinded = this.render.bind(this);
 };
 
@@ -296,6 +302,67 @@ utils.createPrototypeObject(
             return this._stats;
         },
 
+        /**
+         * Lets the render origin (see osg.State.setRenderOrigin) follow the camera, to avoid jittering
+         * from the 32-bit float precision on the GPU when the world coordinates are large. The render
+         * origin is kept on a horizontal grid with the given size, at Z 0, and moved to the grid point
+         * nearest the camera when the camera has moved more than the grid size from it horizontally.
+         * Keeping it still in between keeps what the GPU gets for still geometry unchanged.
+         * @param {number} gridSize The grid size in meters, 0 for keeping the render origin at the world origin.
+         */
+        setRenderOriginGridSize: function(gridSize) {
+            this._renderOriginGridSize = gridSize > 0.0 ? gridSize : 0.0;
+            if (this._renderOriginGridSize === 0.0) {
+                this.getState().setRenderOrigin(vec3.ZERO);
+            } else {
+                this._updateRenderOrigin();
+            }
+        },
+
+        /**
+         * Returns the grid size for moving the render origin with the camera, see setRenderOriginGridSize.
+         * @returns {number} The grid size in meters, 0 if keeping the render origin at the world origin.
+         */
+        getRenderOriginGridSize: function() {
+            return this._renderOriginGridSize;
+        },
+
+        /**
+         * Moves the render origin to the grid point nearest the camera if the camera has moved more
+         * than the grid size from it, see setRenderOriginGridSize.
+         * @private
+         */
+        _updateRenderOrigin: function() {
+            var gridSize = this._renderOriginGridSize;
+            var camera = this.getCamera();
+            var state = this.getState();
+            if (gridSize === 0.0 || !camera || !state) return;
+
+            // The eye is -R^T * t of the view matrix
+            var m = camera.getViewMatrix();
+            var eyeX = -(m[0] * m[12] + m[1] * m[13] + m[2] * m[14]);
+            var eyeY = -(m[4] * m[12] + m[5] * m[13] + m[6] * m[14]);
+            if (!isFinite(eyeX) || !isFinite(eyeY)) return;
+
+            var origin = state.getRenderOrigin();
+            if (Math.abs(eyeX - origin[0]) <= gridSize && Math.abs(eyeY - origin[1]) <= gridSize) return;
+
+            var candidate = this._renderOriginCandidate;
+            candidate[0] = Math.round(eyeX / gridSize) * gridSize;
+            candidate[1] = Math.round(eyeY / gridSize) * gridSize;
+            candidate[2] = 0.0;
+            state.setRenderOrigin(candidate);
+            if (this._renderOriginCallback) this._renderOriginCallback(state.getRenderOrigin());
+        },
+
+        /**
+         * Sets a function called when the camera has moved the render origin, see setRenderOriginGridSize.
+         * @param {function(vec3)|undefined} callback Called with the new render origin (not to be modified), undefined for none.
+         */
+        setRenderOriginCallback: function(callback) {
+            this._renderOriginCallback = callback;
+        },
+
         renderingTraversal: function() {
             this.getState()._frameStamp = this._frameStamp;
 
@@ -446,6 +513,8 @@ utils.createPrototypeObject(
 
             if (this.checkNeedToDoFrame() || canvasSizeChanged) {
                 this._requestRedraw = false;
+                // Before the update and cull traversals, since their callbacks may set world positions relative to it
+                this._updateRenderOrigin();
                 this.updateTraversal();
                 this.renderingTraversal();
             }

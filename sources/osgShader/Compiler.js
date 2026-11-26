@@ -35,6 +35,8 @@ var Compiler = function(attributes, textureAttributes, shaderProcessor) {
 
     this._invariantPosition = false;
     this._isBillboard = false;
+    // True to subtract per-geometry shifts from texture coordinates (see CompilerVertex.declareVertexTexCoord)
+    this._texCoordShift = false;
 
     // Important: if not using Compiler for Both VS and FS Check either of those
     // it allow override by custom Processor of some check between the VS & FS pass (varying mostly)

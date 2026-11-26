@@ -107,11 +107,40 @@ var CompilerVertex = {
 
             var name = varying.getVariable();
             if (name.indexOf('vTexCoord') !== -1) {
-                this.getNode('SetFromNode')
-                    .inputs(this.getOrCreateAttribute('vec2', name.substring(1)))
-                    .outputs(varying);
+                this.declareVertexTexCoord(varying, name.substring(1));
             }
         }
+    },
+
+    /**
+     * Sets a texture coordinate varying from its attribute. With texture coordinate shifts enabled
+     * (_texCoordShift true, off by default), the uniform uTexCoordShiftN is subtracted first: an even
+     * integer offset that osg.State sets per geometry for repeating texture coordinates that are an
+     * affine function of the position, keeping them small near the render origin (see
+     * osg.State.applyTexCoordShifts). Subtracting it does not change what a repeating texture shows,
+     * but avoids interpolating large values (e.g. tens of thousands of repeats over a large terrain
+     * tile), which would make the texture blocky and flicker from the 32-bit float precision.
+     * @param {Variable} varying The vTexCoordN varying.
+     * @param {string} attributeName The TexCoordN attribute name.
+     */
+    declareVertexTexCoord: function(varying, attributeName) {
+        var texCoord = this.getOrCreateAttribute('vec2', attributeName);
+        if (!this._texCoordShift) {
+            this.getNode('SetFromNode')
+                .inputs(texCoord)
+                .outputs(varying);
+            return;
+        }
+        var unit = attributeName.substring('TexCoord'.length);
+        this.getNode('InlineCode')
+            .code('%out = %texCoord - %shift;')
+            .inputs({
+                texCoord: texCoord,
+                shift: this.getOrCreateUniform('vec2', 'uTexCoordShift' + unit)
+            })
+            .outputs({
+                out: varying
+            });
     },
 
     declareVertexPosition: function() {
@@ -345,8 +374,27 @@ var CompilerVertex = {
         return this.skinTransformNormal(inputTangent, this.createVariable('vec3', 'skinTangent'));
     },
 
+    // The local vertex relative to the render origin (see osg.State.setRenderOrigin), for which the
+    // state makes the model-view, model and view matrices relative to it. The subtraction of nearby
+    // 32-bit floats is exact, so geometry near the camera keeps its precision also when its
+    // coordinates are large. Not for billboards, whose shader replaces the model-view rotation.
     getOrCreateLocalVertex: function() {
-        return this.getOrCreateSkinVertex();
+        var vertex = this.getOrCreateSkinVertex();
+        if (this._isBillboard) return vertex;
+
+        var vecOut = this.getVariable('localVertex');
+        if (vecOut) return vecOut;
+        vecOut = this.createVariable('vec3', 'localVertex');
+
+        this.getNode('InlineCode')
+            .code('%out = %vertex - %origin;')
+            .inputs({
+                vertex: vertex,
+                origin: this.getOrCreateUniform('vec3', 'uRenderOrigin')
+            })
+            .outputs({ out: vecOut });
+
+        return vecOut;
     },
 
     getOrCreateLocalNormal: function() {

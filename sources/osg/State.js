@@ -1,5 +1,6 @@
 import { mat4 } from 'osg/glMatrix';
 import { mat3 } from 'osg/glMatrix';
+import { vec3 } from 'osg/glMatrix';
 import notify from 'osg/notify';
 import Object from 'osg/Object';
 import Program from 'osg/Program';
@@ -65,8 +66,13 @@ var State = function(shaderGeneratorProxy) {
         uModelViewMatrix: true,
         uModelNormalMatrix: true,
         uModelViewNormalMatrix: true,
-        uArrayColorEnabled: true
+        uArrayColorEnabled: true,
+        uRenderOrigin: true
     };
+    // Texture coordinate shifts are set per geometry (see applyTexCoordShifts)
+    for (var shiftUnit = 0; shiftUnit < State.MAX_TEXCOORD_SHIFT_UNITS; ++shiftUnit) {
+        this._excludeUniforms['uTexCoordShift' + shiftUnit] = true;
+    }
 
     this._graphicContext = undefined;
     this._shaderGeneratorProxy = shaderGeneratorProxy;
@@ -89,6 +95,23 @@ var State = function(shaderGeneratorProxy) {
     this._modelViewMatrix = Uniform.createMatrix4(mat4.create(), 'uModelViewMatrix');
     this._modelNormalMatrix = Uniform.createMatrix3(mat3.create(), 'uModelNormalMatrix');
     this._modelViewNormalMatrix = Uniform.createMatrix3(mat3.create(), 'uModelViewNormalMatrix');
+
+    // Render origin, a world position near the camera (see setRenderOrigin). Programs whose vertex
+    // shader subtracts uRenderOrigin (the render origin in the model coordinates) from the vertex
+    // get model-view, model and view matrices relative to it, so that the GPU never handles large
+    // coordinates near the camera.
+    this._renderOrigin = vec3.create();
+    this._renderOriginLocal = vec3.create();
+    this._renderOriginUniform = Uniform.createFloat3(vec3.create(), 'uRenderOrigin');
+    this._renderOriginModelView = mat4.create();
+    this._renderOriginModel = mat4.create();
+    this._renderOriginView = mat4.create();
+    this._renderOriginInverseModel = mat4.create();
+    // True if the last applied model-view matrix was made relative to the render origin
+    this._renderOriginApplied = false;
+    // The render origin in the model coordinates and the inverse model matrix, for texture coordinate shifts
+    this._texCoordShiftLocal = vec3.create();
+    this._texCoordShiftInverseModel = mat4.create();
 
     // track uniform for color array enabled
     var arrayColorEnable = new StackObjectPairPool();
@@ -405,11 +428,21 @@ utils.createPrototypeObject(
 
                 var program = this.getLastProgramApplied();
                 var uniformCache = program.getUniformsCache();
+                var gc = this.getGraphicContext();
+
+                // Programs that subtract the render origin from the vertex get the model-view
+                // matrix multiplied with the translation to it
+                var modelView = matrix;
+                var originLocation = uniformCache.uRenderOrigin;
+                this._renderOriginApplied = originLocation !== undefined;
+                if (this._renderOriginApplied) {
+                    modelView = this._applyRenderOrigin(matrix, matrixModel, gc, originLocation);
+                }
+
                 var mu = this._modelViewMatrix;
                 var mul = uniformCache.uModelViewMatrix;
-                var gc = this.getGraphicContext();
                 if (mul) {
-                    mu.setMatrix4(matrix);
+                    mu.setMatrix4(modelView);
                     mu.apply(gc, mul);
                 }
 
@@ -450,6 +483,152 @@ utils.createPrototypeObject(
                 return true;
             };
         })(),
+
+        /**
+         * Sets the render origin, a world position that should be kept near the camera, e.g. by
+         * moving it in steps when the camera has moved far enough from it (see
+         * osgViewer.Viewer.setRenderOriginGridSize). Shaders from the shader generator subtract it, in
+         * the model coordinates, from each vertex before transforming it, and get their model-view,
+         * model and view matrices relative to it. The GPU then only handles small coordinates near the
+         * camera, avoiding jittering from the 32-bit float precision when the coordinates are large,
+         * e.g. hundreds of kilometers from the model origin. Positions computed in world space by those
+         * shaders (e.g. with uModelMatrix) are relative to the render origin, so world positions given
+         * as uniforms to them must be too (see getRenderOrigin). Custom programs without uRenderOrigin
+         * are not affected. Defaults to (0, 0, 0), which changes nothing.
+         * @param {vec3} origin The render origin in world coordinates.
+         */
+        setRenderOrigin: function(origin) {
+            vec3.copy(this._renderOrigin, origin);
+        },
+
+        /**
+         * Returns the render origin, see setRenderOrigin.
+         * @returns {vec3} The render origin in world coordinates.
+         */
+        getRenderOrigin: function() {
+            return this._renderOrigin;
+        },
+
+        /**
+         * Returns true if the last applied model-view matrix was made relative to the render origin,
+         * since the program subtracts it from the vertex (see setRenderOrigin).
+         * @returns {boolean} True if relative to the render origin.
+         */
+        isRenderOriginApplied: function() {
+            return this._renderOriginApplied;
+        },
+
+        /**
+         * Computes the render origin in the model coordinates, rounded to 32-bit floats as the shader
+         * receives it, sets it to the uRenderOrigin uniform, and computes the model-view and model
+         * matrices with the translation to it.
+         * @returns {mat4} The model-view matrix relative to the render origin.
+         * @private
+         */
+        _applyRenderOrigin: function(matrix, matrixModel, gc, originLocation) {
+            var origin = this._renderOrigin;
+            var local = this._renderOriginLocal;
+            var model = this._renderOriginModel;
+
+            if (origin[0] === 0.0 && origin[1] === 0.0 && origin[2] === 0.0) {
+                vec3.set(local, 0.0, 0.0, 0.0);
+            } else if (
+                matrixModel !== undefined &&
+                mat4.invert(this._renderOriginInverseModel, matrixModel)
+            ) {
+                vec3.transformMat4(local, origin, this._renderOriginInverseModel);
+            } else {
+                vec3.copy(local, origin);
+            }
+            // Round to what the shader gets, so that the matrices compensate exactly for what it subtracts
+            local[0] = Math.fround(local[0]);
+            local[1] = Math.fround(local[1]);
+            local[2] = Math.fround(local[2]);
+
+            var uniform = this._renderOriginUniform;
+            uniform.setFloat3(local);
+            uniform.apply(gc, originLocation);
+
+            // modelView * T(local)
+            mat4.translate(this._renderOriginModelView, matrix, local);
+
+            // T(-origin) * model * T(local), so that the world positions are relative to the render origin
+            if (matrixModel !== undefined) {
+                mat4.translate(model, matrixModel, local);
+            } else {
+                mat4.fromTranslation(model, local);
+            }
+            model[12] -= origin[0];
+            model[13] -= origin[1];
+            model[14] -= origin[2];
+
+            return this._renderOriginModelView;
+        },
+
+        /**
+         * Sets the texture coordinate shift uniforms (uTexCoordShiftN, see
+         * osgShader.CompilerVertex.declareVertexTexCoord) of the current program for a geometry. For a
+         * texture coordinate unit with large repeating coordinates that are an affine function of the
+         * vertex X and Y (e.g. a detail texture repeated every few meters over a terrain tile), the shift
+         * is the even integer nearest the coordinates at the render origin, otherwise 0. Even, so that
+         * mirrored repeats are kept too.
+         * @param {Array<Object>} shiftUniforms Objects with unit, location and the last applied u, v.
+         * @param {osg.Geometry} geometry The geometry to draw.
+         * @param {mat4} matrixModel The model matrix, undefined for identity.
+         */
+        applyTexCoordShifts: function(shiftUniforms, geometry, matrixModel) {
+            var gl = this.getGraphicContext();
+            var maps = State.getTexCoordShiftMaps(geometry);
+            var origin = this._renderOrigin;
+            var local;
+            for (var i = 0; i < shiftUniforms.length; ++i) {
+                var shiftUniform = shiftUniforms[i];
+                var map = maps[shiftUniform.unit];
+                var su = 0.0;
+                var sv = 0.0;
+                if (map && (origin[0] !== 0.0 || origin[1] !== 0.0 || origin[2] !== 0.0)) {
+                    if (local === undefined) {
+                        local = this._texCoordShiftLocal;
+                        if (
+                            matrixModel !== undefined &&
+                            mat4.invert(this._texCoordShiftInverseModel, matrixModel)
+                        ) {
+                            vec3.transformMat4(local, origin, this._texCoordShiftInverseModel);
+                        } else {
+                            vec3.copy(local, origin);
+                        }
+                    }
+                    su = 2.0 * Math.round((map[0] * local[0] + map[1] * local[1] + map[2]) * 0.5);
+                    sv = 2.0 * Math.round((map[3] * local[0] + map[4] * local[1] + map[5]) * 0.5);
+                }
+                if (su !== shiftUniform.u || sv !== shiftUniform.v) {
+                    shiftUniform.u = su;
+                    shiftUniform.v = sv;
+                    gl.uniform2f(shiftUniform.location, su, sv);
+                }
+            }
+        },
+
+        /**
+         * Returns the model matrix to apply as uModelMatrix for the last applied model-view matrix,
+         * relative to the render origin if the program subtracts it (see setRenderOrigin).
+         * @param {mat4} matrixModel The model matrix.
+         * @returns {mat4} The model matrix to apply.
+         */
+        getModelMatrixToApply: function(matrixModel) {
+            return this._renderOriginApplied ? this._renderOriginModel : matrixModel;
+        },
+
+        /**
+         * Returns the view matrix to apply as uViewMatrix for the last applied model-view matrix,
+         * relative to the render origin if the program subtracts it (see setRenderOrigin).
+         * @param {mat4} matrixView The view matrix.
+         * @returns {mat4} The view matrix to apply.
+         */
+        getViewMatrixToApply: function(matrixView) {
+            if (!this._renderOriginApplied) return matrixView;
+            return mat4.translate(this._renderOriginView, matrixView, this._renderOrigin);
+        },
 
         applyProjectionMatrix: function(matrix) {
             if (this._lastAppliedProjectionMatrix === matrix) return;
@@ -1579,5 +1758,135 @@ utils.createPrototypeObject(
     'osg',
     'State'
 );
+
+/**
+ * The number of texture coordinate units that can be shifted (see applyTexCoordShifts).
+ * @type {number}
+ */
+State.MAX_TEXCOORD_SHIFT_UNITS = 8;
+
+/**
+ * The minimum absolute texture coordinate for a unit to be shifted (see applyTexCoordShifts).
+ * Smaller coordinates are precise enough.
+ * @type {number}
+ */
+State.MIN_TEXCOORD_SHIFT_MAGNITUDE = 256.0;
+
+/**
+ * The maximum deviation from the affine fit, in texture repeats, for a unit to be shifted. A
+ * shift is an even integer, so a rough fit only makes the remaining coordinates larger.
+ * @type {number}
+ */
+State.MAX_TEXCOORD_SHIFT_FIT_ERROR = 1.0;
+
+/**
+ * Returns the texture coordinate maps of a geometry, fitted on first use and cached on it: per unit
+ * either an array [a, b, c, d, e, f] with u = a * x + b * y + c and v = d * x + e * y + f in the
+ * vertex coordinates, or null if the unit is missing, small, or not such a function.
+ * @param {osg.Geometry} geometry The geometry.
+ * @returns {Array<Array<number>|null>} The maps per texture coordinate unit.
+ */
+State.getTexCoordShiftMaps = function(geometry) {
+    var maps = geometry._texCoordShiftMaps;
+    if (maps !== undefined) return maps;
+
+    maps = [];
+    var attributes = geometry.getVertexAttributeList();
+    var vertexArray = attributes.Vertex;
+    var vertices = vertexArray ? vertexArray.getElements() : undefined;
+    for (var unit = 0; unit < State.MAX_TEXCOORD_SHIFT_UNITS; ++unit) {
+        var texCoordArray = attributes['TexCoord' + unit];
+        var texCoords = texCoordArray ? texCoordArray.getElements() : undefined;
+        maps.push(
+            vertices && texCoords && vertexArray.getItemSize() >= 2 && texCoordArray.getItemSize() >= 2
+                ? State._fitTexCoordShiftMap(
+                      vertices,
+                      vertexArray.getItemSize(),
+                      texCoords,
+                      texCoordArray.getItemSize()
+                  )
+                : null
+        );
+    }
+    geometry._texCoordShiftMaps = maps;
+    return maps;
+};
+
+/**
+ * Fits texture coordinates as an affine function of the vertex X and Y, see getTexCoordShiftMaps.
+ * @private
+ */
+State._fitTexCoordShiftMap = function(vertices, vertexSize, texCoords, texCoordSize) {
+    var n = Math.min(vertices.length / vertexSize, texCoords.length / texCoordSize);
+    if (n < 3) return null;
+
+    // Only large coordinates need shifting
+    var maxMagnitude = 0.0;
+    var i;
+    for (i = 0; i < n; ++i) {
+        maxMagnitude = Math.max(
+            maxMagnitude,
+            Math.abs(texCoords[i * texCoordSize]),
+            Math.abs(texCoords[i * texCoordSize + 1])
+        );
+    }
+    if (maxMagnitude < State.MIN_TEXCOORD_SHIFT_MAGNITUDE) return null;
+
+    // Three vertices spanning a large triangle in X and Y: the first, the farthest from it, and the
+    // farthest from the line between them
+    var x0 = vertices[0];
+    var y0 = vertices[1];
+    var i1 = 0;
+    var best = 0.0;
+    var dx;
+    var dy;
+    for (i = 1; i < n; ++i) {
+        dx = vertices[i * vertexSize] - x0;
+        dy = vertices[i * vertexSize + 1] - y0;
+        if (dx * dx + dy * dy > best) {
+            best = dx * dx + dy * dy;
+            i1 = i;
+        }
+    }
+    var x1 = vertices[i1 * vertexSize] - x0;
+    var y1 = vertices[i1 * vertexSize + 1] - y0;
+    var i2 = 0;
+    best = 0.0;
+    for (i = 1; i < n; ++i) {
+        var cross = Math.abs(x1 * (vertices[i * vertexSize + 1] - y0) - y1 * (vertices[i * vertexSize] - x0));
+        if (cross > best) {
+            best = cross;
+            i2 = i;
+        }
+    }
+    var x2 = vertices[i2 * vertexSize] - x0;
+    var y2 = vertices[i2 * vertexSize + 1] - y0;
+    var det = x1 * y2 - x2 * y1;
+    if (!(Math.abs(det) > 1e-6 * (x1 * x1 + y1 * y1))) return null;
+
+    // Solve per component, relative to the first vertex
+    var map = [];
+    for (var c = 0; c < 2; ++c) {
+        var t0 = texCoords[c];
+        var t1 = texCoords[i1 * texCoordSize + c] - t0;
+        var t2 = texCoords[i2 * texCoordSize + c] - t0;
+        var a = (t1 * y2 - t2 * y1) / det;
+        var b = (x1 * t2 - x2 * t1) / det;
+        map.push(a, b, t0 - a * x0 - b * y0);
+    }
+
+    // Verify on all vertices
+    for (i = 0; i < n; ++i) {
+        var x = vertices[i * vertexSize];
+        var y = vertices[i * vertexSize + 1];
+        if (
+            Math.abs(map[0] * x + map[1] * y + map[2] - texCoords[i * texCoordSize]) > State.MAX_TEXCOORD_SHIFT_FIT_ERROR ||
+            Math.abs(map[3] * x + map[4] * y + map[5] - texCoords[i * texCoordSize + 1]) > State.MAX_TEXCOORD_SHIFT_FIT_ERROR
+        ) {
+            return null;
+        }
+    }
+    return map;
+};
 
 export default State;
