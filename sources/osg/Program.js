@@ -255,6 +255,12 @@ utils.createPrototypeStateAttribute(
             },
 
             invalidate: function() {
+                // A background compile in progress belongs to the old context, compile again when next used
+                if (this._parallelExt !== undefined) {
+                    this._parallelExt = undefined;
+                    this._asyncCompilation = -1;
+                    Program._sParallelCompiling.delete(this);
+                }
                 this._cacheUniformId = undefined;
 
                 this._uniformsCache = undefined;

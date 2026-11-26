@@ -489,6 +489,11 @@ utils.createPrototypeObject(
             // _contextLost check for code calling viewer::frame directly
             // (likely force preload gl resource or direct render control )
             if (this._contextLost) return;
+            // The webglcontextlost event arrives asynchronously, so frames can run on a lost context before it.
+            // Programs linked then get no uniform locations, which makes them drop their uniforms for good
+            // (see State._cacheUniformsForGeneratedProgram), so don't draw until the context is restored.
+            var gl = this.getGraphicContext();
+            if (gl && gl.isContextLost()) return;
 
             this.beginFrame();
 
